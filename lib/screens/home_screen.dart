@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'search_results_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -176,8 +177,13 @@ class _HomeScreenState extends State<HomeScreen> {
   void _performSearch(String query) {
     if (query.trim().isEmpty) return;
     
-    // TODO: Implement actual search functionality
-    _showComingSoon(context, 'Search for: "$query"');
+    // Navigate to search results screen
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SearchResultsScreen(query: query.trim()),
+      ),
+    );
   }
   
   void _showComingSoon(BuildContext context, String feature) {
