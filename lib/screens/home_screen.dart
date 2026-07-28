@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'search_results_screen.dart';
+import '../models/dictionary_entry.dart';
+import '../services/database_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -10,11 +13,56 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
-  
+  final DatabaseService _dbService = DatabaseService();
+
+  Timer? _debounce;
+  List<DictionaryEntry> _results = [];
+  bool _isLoading = false;
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchChanged);
+  }
+
   @override
   void dispose() {
+    _debounce?.cancel();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    final text = _searchController.text;
+    _debounce?.cancel();
+
+    if (text.trim().isEmpty) {
+      setState(() {
+        _query = '';
+        _results = [];
+        _isLoading = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _query = text;
+      _isLoading = true;
+    });
+
+    // Debounce so we don't hit the database on every keystroke.
+    _debounce = Timer(const Duration(milliseconds: 120), () => _runSearch(text));
+  }
+
+  Future<void> _runSearch(String text) async {
+    final results = await _dbService.searchEntries(text.trim());
+    if (!mounted || _searchController.text != text) return;
+    setState(() {
+      _results = results;
+      _isLoading = false;
+    });
   }
 
   @override
@@ -29,143 +77,50 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Welcome message
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Welcome to JapanoDict! 🇯🇵',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Your comprehensive Japanese dictionary with kanji, vocabulary, and example sentences.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 24),
-            
-            // Search bar
             TextField(
               controller: _searchController,
+              autofocus: true,
               decoration: InputDecoration(
                 labelText: 'Search Japanese words, kanji, or English',
                 hintText: 'Try: こんにちは, 漢字, or hello',
                 prefixIcon: const Icon(Icons.search),
-                suffixIcon: IconButton(
-                  onPressed: () {
-                    _searchController.clear();
-                  },
-                  icon: const Icon(Icons.clear),
-                ),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: _searchController.clear,
+                        icon: const Icon(Icons.clear),
+                      ),
                 border: const OutlineInputBorder(),
               ),
-              onSubmitted: (value) {
-                _performSearch(value);
-              },
-            ),
-            
-            const SizedBox(height: 32),
-            
-            // Quick access buttons
-            Text(
-              'Quick Access',
-              style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 16),
-            
             Expanded(
-              child: GridView.count(
-                crossAxisCount: 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                childAspectRatio: 1.2,
-                children: [
-                  _buildQuickAccessCard(
-                    context,
-                    'Kanji Lookup',
-                    '漢字',
-                    Icons.text_fields,
-                    Colors.red,
-                    () => _showComingSoon(context, 'Kanji Lookup'),
-                  ),
-                  _buildQuickAccessCard(
-                    context,
-                    'Radical Search',
-                    '部首',
-                    Icons.grid_view,
-                    Colors.blue,
-                    () => _showComingSoon(context, 'Radical Search'),
-                  ),
-                  _buildQuickAccessCard(
-                    context,
-                    'JLPT Vocabulary',
-                    'JLPT',
-                    Icons.school,
-                    Colors.green,
-                    () => _showComingSoon(context, 'JLPT Vocabulary'),
-                  ),
-                  _buildQuickAccessCard(
-                    context,
-                    'Example Sentences',
-                    '例文',
-                    Icons.format_quote,
-                    Colors.orange,
-                    () => _showComingSoon(context, 'Example Sentences'),
-                  ),
-                ],
-              ),
+              child: _query.isEmpty ? _buildWelcome(context) : _buildResults(context),
             ),
           ],
         ),
       ),
     );
   }
-  
-  Widget _buildQuickAccessCard(
-    BuildContext context,
-    String title,
-    String subtitle,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-  ) {
-    return Card(
-      elevation: 2,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+
+  Widget _buildWelcome(BuildContext context) {
+    return SingleChildScrollView(
+      child: Card(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                icon,
-                size: 32,
-                color: color,
+              Text(
+                'Welcome to JapanoDict! 🇯🇵',
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 8),
               Text(
-                title,
-                style: Theme.of(context).textTheme.titleSmall,
-                textAlign: TextAlign.center,
-              ),
-              Text(
-                subtitle,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-                textAlign: TextAlign.center,
+                'Start typing above to search — results update as you type.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
               ),
             ],
           ),
@@ -173,28 +128,322 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-  
-  void _performSearch(String query) {
-    if (query.trim().isEmpty) return;
-    
-    // Navigate to search results screen
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => SearchResultsScreen(query: query.trim()),
+
+  Widget _buildResults(BuildContext context) {
+    if (_isLoading && _results.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_results.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.search_off, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text(
+              'No results found for "$_query"',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Try different keywords or check your spelling',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: _results.length,
+      itemBuilder: (context, index) => _buildResultCard(_results[index]),
+    );
+  }
+
+  Widget _buildResultCard(DictionaryEntry entry) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: () => _showEntryDetails(entry),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Flexible(
+                    child: Text(
+                      entry.term,
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                  ),
+                  if (entry.isCommon) ...[
+                    const SizedBox(width: 8),
+                    _commonBadge(context),
+                  ],
+                  if (entry.jlpt != null) ...[
+                    const SizedBox(width: 6),
+                    _jlptBadge(context, entry.jlpt!),
+                  ],
+                ],
+              ),
+              if (entry.reading != null && entry.reading!.isNotEmpty)
+                Text(
+                  entry.reading!,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                ),
+              const SizedBox(height: 8),
+              if (entry.partsOfSpeechList.isNotEmpty)
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: entry.partsOfSpeechList.take(3).map((pos) {
+                    return Chip(
+                      label: Text(pos, style: const TextStyle(fontSize: 11)),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    );
+                  }).toList(),
+                ),
+              const SizedBox(height: 8),
+              ...entry.glossList.take(3).map((gloss) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('• ', style: TextStyle(fontSize: 16)),
+                      Expanded(
+                        child: Text(gloss, style: Theme.of(context).textTheme.bodyMedium),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              if (entry.glossList.length > 3)
+                Text(
+                  '+ ${entry.glossList.length - 3} more definitions',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontStyle: FontStyle.italic,
+                      ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
-  
-  void _showComingSoon(BuildContext context, String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature - Coming soon!'),
-        action: SnackBarAction(
-          label: 'OK',
-          onPressed: () {},
+
+  void _showEntryDetails(DictionaryEntry entry) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (context, scrollController) {
+            return SingleChildScrollView(
+              controller: scrollController,
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            entry.term,
+                            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                          ),
+                        ),
+                        if (entry.isCommon) ...[
+                          const SizedBox(width: 10),
+                          _commonBadge(context),
+                        ],
+                        if (entry.jlpt != null) ...[
+                          const SizedBox(width: 6),
+                          _jlptBadge(context, entry.jlpt!),
+                        ],
+                      ],
+                    ),
+                    if (entry.reading != null && entry.reading!.isNotEmpty)
+                      Text(
+                        entry.reading!,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                      ),
+                    const SizedBox(height: 16),
+                    if (entry.partsOfSpeechList.isNotEmpty) ...[
+                      Text(
+                        'Parts of Speech',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: entry.partsOfSpeechList.map((pos) => Chip(label: Text(pos))).toList(),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    Text(
+                      'Definitions',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...entry.glossList.asMap().entries.map((e) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${e.key + 1}. ',
+                              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                            ),
+                            Expanded(
+                              child: Text(e.value, style: Theme.of(context).textTheme.bodyLarge),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                    _buildExamples(context, entry),
+                    if (entry.tagsList.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        'Tags',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: entry.tagsList.map((tag) {
+                          return Chip(
+                            label: Text(tag),
+                            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _commonBadge(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF8DC63F),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: const Text(
+        'common',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
         ),
       ),
+    );
+  }
+
+  Widget _jlptBadge(BuildContext context, String level) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF909DC0),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        level.toLowerCase(),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExamples(BuildContext context, DictionaryEntry entry) {
+    return FutureBuilder<List<ExampleSentence>>(
+      future: _dbService.getExamples(entry.id),
+      builder: (context, snapshot) {
+        final examples = snapshot.data ?? const [];
+        if (examples.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 16),
+            Text(
+              'Examples',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            ...examples.map((ex) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      ex.ja,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    if (ex.en.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          ex.en,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        );
+      },
     );
   }
 }
