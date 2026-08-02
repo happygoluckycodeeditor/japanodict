@@ -398,6 +398,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       );
                     }),
+                    _buildKanji(context, entry),
                     _buildExamples(context, entry),
                     if (entry.tagsList.isNotEmpty) ...[
                       const SizedBox(height: 16),
@@ -460,6 +461,118 @@ class _HomeScreenState extends State<HomeScreen> {
           color: Colors.white,
           fontSize: 12,
           fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  /// Per-character breakdown, mirroring Shirabe Jisho's "Kanji" panel — for a
+  /// word like 竜虎, one card per character with its own meanings and
+  /// readings. Loaded lazily like examples, so opening a kana-only entry costs
+  /// nothing.
+  Widget _buildKanji(BuildContext context, DictionaryEntry entry) {
+    return FutureBuilder<List<KanjiEntry>>(
+      future: _dbService.getKanjiForTerm(entry.term),
+      builder: (context, snapshot) {
+        final kanji = snapshot.data ?? const [];
+        if (kanji.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 16),
+            Text(
+              'Kanji',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            ...kanji.map((k) => _buildKanjiCard(context, k)),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildKanjiCard(BuildContext context, KanjiEntry kanji) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 56,
+              child: Text(
+                kanji.literal,
+                style: theme.textTheme.displaySmall,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    kanji.meanings,
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  // Kun before on, matching how kanji dictionaries print them.
+                  if (kanji.kunReadings != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        kanji.kunReadings!,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ),
+                  if (kanji.onReadings != null)
+                    Text(
+                      kanji.onReadings!,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      if (kanji.strokeCount != null)
+                        _kanjiChip(context, '${kanji.strokeCount} strokes'),
+                      // Only grades 1–6 are a meaningful "taught in year N";
+                      // 8/9/10 are set membership, not a year.
+                      if (kanji.isKyoiku)
+                        _kanjiChip(context, 'grade ${kanji.grade}'),
+                      if (kanji.freq != null)
+                        _kanjiChip(context, 'freq #${kanji.freq}'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _kanjiChip(BuildContext context, String label) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
     );

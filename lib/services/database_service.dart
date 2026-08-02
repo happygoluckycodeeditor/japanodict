@@ -27,7 +27,8 @@ class DatabaseService {
   // app storage is refreshed whenever this version differs from the marker
   // written on the last successful copy, so users never get stuck on a stale
   // database after an update.
-  static const int _dbVersion = 5;
+  // v6 added the KANJIDIC2 `kanji` table (scripts/build_kanji_db.py).
+  static const int _dbVersion = 6;
   static const String _dbAsset = 'assets/databases/jitendex.db';
   static const String _dbFile = 'jitendex.db';
 
@@ -199,6 +200,55 @@ class DatabaseService {
           ja: r['ja'] as String? ?? '',
           en: r['en'] as String? ?? '',
         )).toList();
+  }
+
+  /// Returns the KANJIDIC2 entry for each distinct kanji in [term], in the
+  /// order the characters appear.
+  ///
+  /// Kana, punctuation and Latin characters are skipped, so a term like
+  /// 見せる yields only 見, and a purely-kana term yields an empty list.
+  /// Characters with no KANJIDIC2 row (readings-only JIS X 0212 entries were
+  /// dropped at import time) are simply absent from the result.
+  Future<List<KanjiEntry>> getKanjiForTerm(String term) async {
+    final literals = extractKanji(term);
+    if (literals.isEmpty) return const [];
+
+    final db = await database;
+    final placeholders = List.filled(literals.length, '?').join(',');
+    final rows = await db.query(
+      'kanji',
+      where: 'literal IN ($placeholders)',
+      whereArgs: literals,
+    );
+
+    // SQL gives no ordering guarantee for an IN clause, so re-order to match
+    // the term. Reading 竜虎 as 虎竜 would be actively confusing.
+    final byLiteral = {
+      for (final row in rows) row['literal'] as String: KanjiEntry.fromMap(row),
+    };
+    return literals
+        .map((l) => byLiteral[l])
+        .whereType<KanjiEntry>()
+        .toList();
+  }
+
+  /// Distinct CJK ideographs in [text], in order of first appearance.
+  ///
+  /// Covers the CJK Unified Ideographs block plus Extension A and the
+  /// compatibility block; deliberately excludes kana and the iteration mark 々
+  /// (which has no KANJIDIC2 entry of its own).
+  static List<String> extractKanji(String text) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final rune in text.runes) {
+      final isKanji = (rune >= 0x4E00 && rune <= 0x9FFF) ||
+          (rune >= 0x3400 && rune <= 0x4DBF) ||
+          (rune >= 0xF900 && rune <= 0xFAFF);
+      if (!isKanji) continue;
+      final char = String.fromCharCode(rune);
+      if (seen.add(char)) out.add(char);
+    }
+    return out;
   }
 
   Future<void> close() async {

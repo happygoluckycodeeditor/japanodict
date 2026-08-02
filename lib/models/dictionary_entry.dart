@@ -58,3 +58,67 @@ class ExampleSentence {
 
   const ExampleSentence({required this.ja, required this.en});
 }
+
+/// One character from KANJIDIC2, used for the per-character breakdown in the
+/// entry detail view (e.g. 竜虎 → 竜 "dragon, imperial" + 虎 "tiger").
+///
+/// This is a separate source from the dictionary itself — Jitendex/JMdict is
+/// vocabulary-level and has no per-character data. See
+/// `scripts/build_kanji_db.py`.
+class KanjiEntry {
+  final String literal;
+
+  /// School grade the character is taught at: 1–6 are the kyōiku kanji, 8 is
+  /// the remainder of the jōyō set, 9/10 are jinmeiyō (name-use) kanji.
+  final int? grade;
+  final int? strokeCount;
+
+  /// Frequency rank across a corpus of newspaper text — 1 is the most common
+  /// of the ~2,500 ranked characters. Null means unranked, not "rare-ish".
+  final int? freq;
+  final String? onReadings;
+  final String? kunReadings;
+  final String meanings;
+  final String? nanori;
+
+  const KanjiEntry({
+    required this.literal,
+    this.grade,
+    this.strokeCount,
+    this.freq,
+    this.onReadings,
+    this.kunReadings,
+    required this.meanings,
+    this.nanori,
+  });
+
+  factory KanjiEntry.fromMap(Map<String, dynamic> map) {
+    return KanjiEntry(
+      literal: map['literal'] as String,
+      grade: map['grade'] as int?,
+      strokeCount: map['stroke_count'] as int?,
+      freq: map['freq'] as int?,
+      onReadings: map['on_readings'] as String?,
+      kunReadings: map['kun_readings'] as String?,
+      meanings: map['meanings'] as String,
+      nanori: map['nanori'] as String?,
+    );
+  }
+
+  List<String> get meaningList => _split(meanings);
+  List<String> get onList => _split(onReadings);
+  List<String> get kunList => _split(kunReadings);
+
+  /// True for the jōyō kanji taught in compulsory schooling (grades 1–6) —
+  /// used to show a "grade N" badge only where that number means something.
+  bool get isKyoiku => grade != null && grade! >= 1 && grade! <= 6;
+
+  static List<String> _split(String? value) {
+    if (value == null) return const [];
+    return value
+        .split(',')
+        .map((v) => v.trim())
+        .where((v) => v.isNotEmpty)
+        .toList();
+  }
+}
