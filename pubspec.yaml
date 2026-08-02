@@ -51,6 +51,14 @@ dependencies:
   # File operations
   path_provider: ^2.1.4
 
+  # Handwriting (kanji draw-to-search) — on-device ML Kit Digital Ink.
+  # PINNED BELOW 0.15.0 ON PURPOSE — do not bump without testing on a device.
+  # 0.15.0 rewrote the Android plugin from Java to Kotlin and changed the
+  # MethodChannel name to "google_mlkit_digital_ink_recognition" while Dart
+  # still opens "google_mlkit_digital_ink_recognizer", so every call fails
+  # with MissingPluginException. 0.14.2 has matching names.
+  google_mlkit_digital_ink_recognition: ^0.14.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

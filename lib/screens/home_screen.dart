@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/dictionary_entry.dart';
 import '../services/database_service.dart';
+import '../widgets/kanji_draw_pad.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -13,17 +14,20 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
   final DatabaseService _dbService = DatabaseService();
 
   Timer? _debounce;
   List<DictionaryEntry> _results = [];
   bool _isLoading = false;
   String _query = '';
+  bool _showDrawPad = false;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    _searchFocus.addListener(_onSearchFocusChanged);
   }
 
   @override
@@ -31,7 +35,38 @@ class _HomeScreenState extends State<HomeScreen> {
     _debounce?.cancel();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
+    _searchFocus.removeListener(_onSearchFocusChanged);
+    _searchFocus.dispose();
     super.dispose();
+  }
+
+  /// The soft keyboard and the draw pad compete for the same screen space, so
+  /// focusing the text field puts the pad away.
+  void _onSearchFocusChanged() {
+    if (_searchFocus.hasFocus && _showDrawPad) {
+      setState(() => _showDrawPad = false);
+    }
+  }
+
+  void _toggleDrawPad() {
+    setState(() => _showDrawPad = !_showDrawPad);
+    if (_showDrawPad) {
+      // Dismiss the keyboard; the focus listener would otherwise immediately
+      // close the pad we just opened.
+      _searchFocus.unfocus();
+    }
+  }
+
+  /// Appends a recognised character to the query. The controller's listener
+  /// picks it up, so handwriting reuses the same debounced search path as
+  /// typing rather than having its own.
+  void _appendCharacter(String text) {
+    _searchController.value = TextEditingValue(
+      text: _searchController.text + text,
+      selection: TextSelection.collapsed(
+        offset: _searchController.text.length + text.length,
+      ),
+    );
   }
 
   void _onSearchChanged() {
@@ -72,31 +107,61 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('JapanoDict'),
         backgroundColor: Theme.of(context).colorScheme.primaryContainer,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
+      body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TextField(
-              controller: _searchController,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: 'Search Japanese words, kanji, or English',
-                hintText: 'Try: こんにちは, 漢字, or hello',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _query.isEmpty
-                    ? null
-                    : IconButton(
-                        onPressed: _searchController.clear,
-                        icon: const Icon(Icons.clear),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: TextField(
+                controller: _searchController,
+                focusNode: _searchFocus,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Search Japanese words, kanji, or English',
+                  hintText: 'Try: こんにちは, 漢字, or hello',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_query.isNotEmpty)
+                        IconButton(
+                          onPressed: _searchController.clear,
+                          icon: const Icon(Icons.clear),
+                          tooltip: 'Clear',
+                        ),
+                      IconButton(
+                        onPressed: _toggleDrawPad,
+                        icon: const Icon(Icons.draw_outlined),
+                        tooltip: 'Draw kanji',
+                        color: _showDrawPad
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
                       ),
-                border: const OutlineInputBorder(),
+                    ],
+                  ),
+                  border: const OutlineInputBorder(),
+                ),
               ),
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: _query.isEmpty ? _buildWelcome(context) : _buildResults(context),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _query.isEmpty ? _buildWelcome(context) : _buildResults(context),
+              ),
             ),
+            if (_showDrawPad)
+              SizedBox(
+                // Roughly soft-keyboard height, so toggling between typing and
+                // drawing doesn't make the results list jump around.
+                height: (MediaQuery.sizeOf(context).height * 0.42)
+                    .clamp(260.0, 380.0),
+                child: KanjiDrawPad(
+                  onCharacterSelected: _appendCharacter,
+                  onClose: () => setState(() => _showDrawPad = false),
+                ),
+              ),
           ],
         ),
       ),
