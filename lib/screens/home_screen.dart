@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/dictionary_entry.dart';
 import '../services/database_service.dart';
+import 'credits_screen.dart';
 import '../widgets/kanji_draw_pad.dart';
+import '../widgets/stroke_order_diagram.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -28,6 +30,10 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _searchController.addListener(_onSearchChanged);
     _searchFocus.addListener(_onSearchFocusChanged);
+    // Start the (possibly first-run) database copy immediately rather than
+    // on the first search, so it's more likely to be ready by the time the
+    // user finishes typing.
+    unawaited(_dbService.database);
   }
 
   @override
@@ -107,6 +113,7 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('JapanoDict'),
         backgroundColor: Theme.of(context).colorScheme.primaryContainer,
       ),
+      drawer: _buildDrawer(context),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -494,6 +501,82 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildDrawer(BuildContext context) {
+    final theme = Theme.of(context);
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          DrawerHeader(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text(
+                  'JapanoDict',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: theme.colorScheme.onPrimaryContainer,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Japanese dictionary',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.copyright_outlined),
+            title: const Text('Credits & Licences'),
+            subtitle: const Text('Dictionary data sources'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CreditsScreen()),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Stroke-order animation for a kanji card, falling back to the plain
+  /// glyph while loading or when KanjiVG has no data for the character
+  /// (it covers ~6,700 of KANJIDIC2's ~10,400, so gaps are normal).
+  Widget _buildStrokeOrder(BuildContext context, KanjiEntry kanji) {
+    final theme = Theme.of(context);
+    const size = 88.0;
+
+    return FutureBuilder<KanjiStrokes?>(
+      future: _dbService.getStrokesFor(kanji.literal),
+      builder: (context, snapshot) {
+        final strokes = snapshot.data;
+        if (strokes == null || strokes.outlines.isEmpty) {
+          return SizedBox(
+            width: size,
+            height: size,
+            child: Center(
+              child: Text(
+                kanji.literal,
+                style: theme.textTheme.displaySmall,
+              ),
+            ),
+          );
+        }
+        return StrokeOrderDiagram(strokes: strokes, size: size);
+      },
+    );
+  }
+
   Widget _buildKanjiCard(BuildContext context, KanjiEntry kanji) {
     final theme = Theme.of(context);
     return Card(
@@ -503,13 +586,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              width: 56,
-              child: Text(
-                kanji.literal,
-                style: theme.textTheme.displaySmall,
-              ),
-            ),
+            _buildStrokeOrder(context, kanji),
             const SizedBox(width: 12),
             Expanded(
               child: Column(

@@ -122,3 +122,32 @@ class KanjiEntry {
         .toList();
   }
 }
+
+/// Stroke-order outlines for one character, from KanjiVG.
+///
+/// A third data source, independent of both Jitendex and KANJIDIC2 — the
+/// latter has a stroke *count* but no geometry. See
+/// `scripts/build_strokes_db.py`.
+class KanjiStrokes {
+  const KanjiStrokes({required this.literal, required this.outlines});
+
+  final String literal;
+
+  /// One SVG path per stroke, in writing order.
+  final List<String> outlines;
+
+  /// KanjiVG draws every character into this fixed square viewBox, so
+  /// renderers must scale by `size / viewBox` rather than measuring bounds
+  /// (measuring would make a small character like 一 fill the whole cell).
+  static const double viewBox = 109.0;
+
+  factory KanjiStrokes.fromMap(Map<String, dynamic> map) {
+    return KanjiStrokes(
+      literal: map['literal'] as String,
+      outlines: (map['paths'] as String)
+          .split('\n')
+          .where((p) => p.trim().isNotEmpty)
+          .toList(),
+    );
+  }
+}

@@ -9,7 +9,10 @@ import '../utils/romaji.dart';
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
-  static Database? _database;
+  static Future<Database>? _databaseFuture;
+
+  /// Channel implemented in MainActivity.kt — see [_copyDatabaseAsset].
+  static const MethodChannel _dbChannel = MethodChannel('japanodict/db');
 
   factory DatabaseService() {
     return _instance;
@@ -17,10 +20,19 @@ class DatabaseService {
 
   DatabaseService._internal();
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-    _database = await _initDatabase();
-    return _database!;
+  /// Memoizes the in-flight future, not just the finished [Database].
+  ///
+  /// Checking a `Database?` field only helps *after* init completes: two
+  /// callers racing before that (HomeScreen's startup prefetch and the first
+  /// search are milliseconds apart) would both see null and each start their
+  /// own `_initDatabase()`, so the ~80MB copy ran twice against the same
+  /// file. Sharing one future means every caller awaits the same init.
+  Future<Database> get database {
+    return _databaseFuture ??= _initDatabase().catchError((Object e) {
+      // Don't poison the singleton with a rejected future — allow a retry.
+      _databaseFuture = null;
+      throw e;
+    });
   }
 
   // Bump this whenever the bundled asset database changes. The copied copy in
@@ -28,7 +40,8 @@ class DatabaseService {
   // written on the last successful copy, so users never get stuck on a stale
   // database after an update.
   // v6 added the KANJIDIC2 `kanji` table (scripts/build_kanji_db.py).
-  static const int _dbVersion = 6;
+  // v7 added the KanjiVG `kanji_strokes` table (scripts/build_strokes_db.py).
+  static const int _dbVersion = 7;
   static const String _dbAsset = 'assets/databases/jitendex.db';
   static const String _dbFile = 'jitendex.db';
 
@@ -43,14 +56,9 @@ class DatabaseService {
         : null;
 
     if (!exists || storedVersion != _dbVersion) {
-      try {
-        await Directory(dirname(path)).create(recursive: true);
-      } catch (_) {}
-
-      // Copy the current database from assets, replacing any stale copy.
-      final data = await rootBundle.load(_dbAsset);
-      final bytes = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
-      await File(path).writeAsBytes(bytes, flush: true);
+      await _copyDatabaseAsset(path);
+      // Written only after the copy succeeds, so a failed or interrupted
+      // copy is retried on the next launch rather than being trusted.
       await versionFile.writeAsString('$_dbVersion', flush: true);
 
       // Remove the previous (much larger) flattened database if it's still
@@ -62,6 +70,38 @@ class DatabaseService {
     }
 
     return await openDatabase(path, readOnly: true);
+  }
+
+  /// Copies the bundled ~80MB database out of the APK to [path].
+  ///
+  /// Prefers the native `japanodict/db` channel (MainActivity.kt), which
+  /// streams the asset on a background thread so the bytes never enter the
+  /// Dart heap. The pure-Dart path below is the fallback for tests and any
+  /// platform without that channel — it is the one that caused ANRs on
+  /// Android, because `rootBundle.load` materialises the whole asset on the
+  /// root isolate. (Moving *that* to a background isolate is not an option:
+  /// `flutter/assets` isn't serviced through BackgroundIsolateBinaryMessenger
+  /// and the reply arrives null.)
+  static Future<void> _copyDatabaseAsset(String path) async {
+    final sw = Stopwatch()..start();
+    try {
+      await _dbChannel.invokeMethod<void>('copyAsset', {
+        'assetKey': _dbAsset,
+        'destPath': path,
+      });
+      debugPrint('DatabaseService: native asset copy took ${sw.elapsedMilliseconds}ms');
+      return;
+    } on MissingPluginException {
+      debugPrint('DatabaseService: no native copy channel, falling back to rootBundle');
+    }
+
+    try {
+      await Directory(dirname(path)).create(recursive: true);
+    } catch (_) {}
+    final data = await rootBundle.load(_dbAsset);
+    final bytes = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+    await File(path).writeAsBytes(bytes, flush: true);
+    debugPrint('DatabaseService: Dart asset copy took ${sw.elapsedMilliseconds}ms');
   }
 
   static const _columns = ['id', 'term', 'reading', 'glosses', 'parts_of_speech', 'tags', 'score', 'is_common', 'jlpt'];
@@ -230,6 +270,24 @@ class DatabaseService {
         .map((l) => byLiteral[l])
         .whereType<KanjiEntry>()
         .toList();
+  }
+
+  /// Stroke-order outlines for [literal], or null if KanjiVG has no entry.
+  ///
+  /// KanjiVG covers ~6,700 characters against KANJIDIC2's ~10,400, so a
+  /// missing row is normal for rarer kanji — callers must handle null rather
+  /// than treating it as an error.
+  Future<KanjiStrokes?> getStrokesFor(String literal) async {
+    final db = await database;
+    final rows = await db.query(
+      'kanji_strokes',
+      columns: ['literal', 'paths'],
+      where: 'literal = ?',
+      whereArgs: [literal],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return KanjiStrokes.fromMap(rows.first);
   }
 
   /// Distinct CJK ideographs in [text], in order of first appearance.
