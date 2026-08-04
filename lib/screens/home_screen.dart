@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../models/dictionary_entry.dart';
 import '../services/database_service.dart';
 import 'credits_screen.dart';
+import 'flashcards_screen.dart';
 import '../widgets/kanji_draw_pad.dart';
 import '../widgets/stroke_order_diagram.dart';
 
@@ -532,6 +533,19 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+          ListTile(
+            leading: const Icon(Icons.style_outlined),
+            title: const Text('Flashcards'),
+            subtitle: const Text('JLPT vocabulary and kanji decks'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const FlashcardsScreen()),
+              );
+            },
+          ),
+          const Divider(),
           ListTile(
             leading: const Icon(Icons.copyright_outlined),
             title: const Text('Credits & Licences'),

@@ -9,6 +9,12 @@ class DictionaryEntry {
   final bool isCommon;
   final String? jlpt;
 
+  /// JMdict entry sequence — groups the spellings and readings of one word
+  /// (車/くるま and its rarer forms all share it). Unlike [id], which is an
+  /// autoincrement that shifts every time the importer runs, this is stable
+  /// across database rebuilds, so it's what flashcard favourites are keyed by.
+  final int? sequence;
+
   DictionaryEntry({
     required this.id,
     required this.term,
@@ -19,6 +25,7 @@ class DictionaryEntry {
     this.score,
     this.isCommon = false,
     this.jlpt,
+    this.sequence,
   });
 
   factory DictionaryEntry.fromMap(Map<String, dynamic> map) {
@@ -32,6 +39,7 @@ class DictionaryEntry {
       score: map['score'] as int?,
       isCommon: (map['is_common'] as int? ?? 0) == 1,
       jlpt: map['jlpt'] as String?,
+      sequence: map['sequence'] as int?,
     );
   }
 

@@ -104,9 +104,9 @@ class DatabaseService {
     debugPrint('DatabaseService: Dart asset copy took ${sw.elapsedMilliseconds}ms');
   }
 
-  static const _columns = ['id', 'term', 'reading', 'glosses', 'parts_of_speech', 'tags', 'score', 'is_common', 'jlpt'];
+  static const _columns = ['id', 'term', 'reading', 'glosses', 'parts_of_speech', 'tags', 'score', 'is_common', 'jlpt', 'sequence'];
   static const _ftsSelect =
-      'd.id, d.term, d.reading, d.glosses, d.parts_of_speech, d.tags, d.score, d.is_common, d.jlpt';
+      'd.id, d.term, d.reading, d.glosses, d.parts_of_speech, d.tags, d.score, d.is_common, d.jlpt, d.sequence';
 
   Future<List<DictionaryEntry>> searchEntries(String query, {int limit = 50}) async {
     final trimmed = query.trim();
@@ -288,6 +288,133 @@ class DatabaseService {
     );
     if (rows.isEmpty) return null;
     return KanjiStrokes.fromMap(rows.first);
+  }
+
+  // ---------------------------------------------------------------------
+  // Flashcard decks
+  // ---------------------------------------------------------------------
+
+  /// `MAX(score)` picks *which* spelling of a word becomes the card.
+  ///
+  /// This leans on SQLite's documented bare-column rule: in a query with a
+  /// single `MAX()`, the non-aggregated columns come from the row that
+  /// produced the maximum. Since a word's spellings are separate rows sharing
+  /// one `sequence`, grouping without this would hand back an arbitrary one —
+  /// a ばね card could show 撥条, and a 車 card 俥. Score ranks the canonical
+  /// form highest (ばね 200 vs 発条 -101), so this picks the spelling a learner
+  /// should actually recognise.
+  static const String _deckSelect =
+      'id, term, reading, glosses, parts_of_speech, tags, score, is_common, jlpt, sequence, MAX(score)';
+
+  /// One card per word for a JLPT level (`N5`…`N1`), common words first.
+  ///
+  /// Deduplicated by `sequence`, which matters more than it looks: N1 alone is
+  /// 4,882 rows but only 3,229 distinct words, so skipping this would pad the
+  /// deck with hundreds of rare alternate spellings of words already in it.
+  Future<List<DictionaryEntry>> getVocabDeck(String jlpt) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT $_deckSelect
+      FROM dictionary
+      WHERE jlpt = ?
+      GROUP BY sequence
+      ORDER BY is_common DESC, score DESC, term ASC
+    ''', [jlpt]);
+    return rows.map(DictionaryEntry.fromMap).toList();
+  }
+
+  /// One card per character for a KANJIDIC2 school grade.
+  ///
+  /// [grade] 1–6 are the kyōiku years and 8 is the rest of jōyō; passing 9
+  /// returns both jinmeiyō sets (9 and 10 together), since that split is about
+  /// which name-use list a character came from, not difficulty.
+  ///
+  /// Ordered by newspaper frequency so the characters worth knowing first come
+  /// first; unranked characters sort last rather than being treated as rank 0.
+  Future<List<KanjiEntry>> getKanjiDeck(int grade) async {
+    final db = await database;
+    final rows = await db.query(
+      'kanji',
+      where: grade == 9 ? 'grade IN (9, 10)' : 'grade = ?',
+      whereArgs: grade == 9 ? null : [grade],
+      orderBy: 'freq IS NULL, freq ASC, stroke_count ASC, literal ASC',
+    );
+    return rows.map(KanjiEntry.fromMap).toList();
+  }
+
+  /// Card counts for every deck, keyed by `Deck.id` (`N5`, `grade:1`, …).
+  ///
+  /// Two aggregate queries rather than one count per deck, so the picker isn't
+  /// firing thirteen round trips at the database on open.
+  Future<Map<String, int>> getDeckCounts() async {
+    final db = await database;
+    final counts = <String, int>{};
+
+    final vocab = await db.rawQuery('''
+      SELECT jlpt, COUNT(*) AS n FROM (
+        SELECT jlpt FROM dictionary WHERE jlpt IS NOT NULL GROUP BY sequence
+      ) GROUP BY jlpt
+    ''');
+    for (final row in vocab) {
+      counts[row['jlpt'] as String] = row['n'] as int;
+    }
+
+    final kanji = await db.rawQuery('''
+      SELECT grade, COUNT(*) AS n FROM kanji WHERE grade IS NOT NULL GROUP BY grade
+    ''');
+    for (final row in kanji) {
+      final grade = row['grade'] as int;
+      // 9 and 10 share the "Jinmeiyō" deck, so their counts add up.
+      final key = grade == 10 ? 'grade:9' : 'grade:$grade';
+      counts[key] = (counts[key] ?? 0) + (row['n'] as int);
+    }
+
+    return counts;
+  }
+
+  /// Rebuilds favourited vocabulary cards from stored JMdict [sequences].
+  ///
+  /// Returned in the order given (favourites are stored newest-first), because
+  /// an `IN` clause has no ordering guarantee. Sequences with no surviving row
+  /// — possible if a rebuild dropped an entry — are skipped rather than
+  /// producing a blank card.
+  Future<List<DictionaryEntry>> getEntriesBySequence(List<int> sequences) async {
+    if (sequences.isEmpty) return const [];
+    final db = await database;
+    final placeholders = List.filled(sequences.length, '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT $_deckSelect
+      FROM dictionary
+      WHERE sequence IN ($placeholders)
+      GROUP BY sequence
+    ''', sequences);
+
+    final bySequence = {
+      for (final row in rows) row['sequence'] as int: DictionaryEntry.fromMap(row),
+    };
+    return sequences
+        .map((s) => bySequence[s])
+        .whereType<DictionaryEntry>()
+        .toList();
+  }
+
+  /// Rebuilds favourited kanji cards from stored [literals], preserving order.
+  Future<List<KanjiEntry>> getKanjiByLiterals(List<String> literals) async {
+    if (literals.isEmpty) return const [];
+    final db = await database;
+    final placeholders = List.filled(literals.length, '?').join(',');
+    final rows = await db.query(
+      'kanji',
+      where: 'literal IN ($placeholders)',
+      whereArgs: literals,
+    );
+    final byLiteral = {
+      for (final row in rows) row['literal'] as String: KanjiEntry.fromMap(row),
+    };
+    return literals
+        .map((l) => byLiteral[l])
+        .whereType<KanjiEntry>()
+        .toList();
   }
 
   /// Distinct CJK ideographs in [text], in order of first appearance.
