@@ -5,8 +5,9 @@ import '../models/dictionary_entry.dart';
 import '../services/database_service.dart';
 import 'credits_screen.dart';
 import 'flashcards_screen.dart';
+import '../widgets/entry_badges.dart';
+import '../widgets/entry_detail_sheet.dart';
 import '../widgets/kanji_draw_pad.dart';
-import '../widgets/stroke_order_diagram.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -240,7 +241,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: InkWell(
-        onTap: () => _showEntryDetails(entry),
+        onTap: () => showEntryDetailSheet(context, entry),
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -260,11 +261,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   if (entry.isCommon) ...[
                     const SizedBox(width: 8),
-                    _commonBadge(context),
+                    const CommonBadge(),
                   ],
                   if (entry.jlpt != null) ...[
                     const SizedBox(width: 6),
-                    _jlptBadge(context, entry.jlpt!),
+                    JlptBadge(level: entry.jlpt!),
                   ],
                 ],
               ),
@@ -315,190 +316,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-    );
-  }
-
-  void _showEntryDetails(DictionaryEntry entry) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          minChildSize: 0.5,
-          maxChildSize: 0.95,
-          expand: false,
-          builder: (context, scrollController) {
-            return SingleChildScrollView(
-              controller: scrollController,
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            entry.term,
-                            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                          ),
-                        ),
-                        if (entry.isCommon) ...[
-                          const SizedBox(width: 10),
-                          _commonBadge(context),
-                        ],
-                        if (entry.jlpt != null) ...[
-                          const SizedBox(width: 6),
-                          _jlptBadge(context, entry.jlpt!),
-                        ],
-                      ],
-                    ),
-                    if (entry.reading != null && entry.reading!.isNotEmpty)
-                      Text(
-                        entry.reading!,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                      ),
-                    const SizedBox(height: 16),
-                    if (entry.partsOfSpeechList.isNotEmpty) ...[
-                      Text(
-                        'Parts of Speech',
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: entry.partsOfSpeechList.map((pos) => Chip(label: Text(pos))).toList(),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    Text(
-                      'Definitions',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                    const SizedBox(height: 8),
-                    ...entry.glossList.asMap().entries.map((e) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${e.key + 1}. ',
-                              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                            ),
-                            Expanded(
-                              child: Text(e.value, style: Theme.of(context).textTheme.bodyLarge),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                    _buildKanji(context, entry),
-                    _buildExamples(context, entry),
-                    if (entry.tagsList.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        'Tags',
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: entry.tagsList.map((tag) {
-                          return Chip(
-                            label: Text(tag),
-                            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                          );
-                        }).toList(),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _commonBadge(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: const Color(0xFF8DC63F),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: const Text(
-        'common',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  Widget _jlptBadge(BuildContext context, String level) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: const Color(0xFF909DC0),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        level.toLowerCase(),
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  /// Per-character breakdown, mirroring Shirabe Jisho's "Kanji" panel — for a
-  /// word like 竜虎, one card per character with its own meanings and
-  /// readings. Loaded lazily like examples, so opening a kana-only entry costs
-  /// nothing.
-  Widget _buildKanji(BuildContext context, DictionaryEntry entry) {
-    return FutureBuilder<List<KanjiEntry>>(
-      future: _dbService.getKanjiForTerm(entry.term),
-      builder: (context, snapshot) {
-        final kanji = snapshot.data ?? const [];
-        if (kanji.isEmpty) return const SizedBox.shrink();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 16),
-            Text(
-              'Kanji',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            ...kanji.map((k) => _buildKanjiCard(context, k)),
-          ],
-        );
-      },
     );
   }
 
@@ -560,159 +377,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  /// Stroke-order animation for a kanji card, falling back to the plain
-  /// glyph while loading or when KanjiVG has no data for the character
-  /// (it covers ~6,700 of KANJIDIC2's ~10,400, so gaps are normal).
-  Widget _buildStrokeOrder(BuildContext context, KanjiEntry kanji) {
-    final theme = Theme.of(context);
-    const size = 88.0;
-
-    return FutureBuilder<KanjiStrokes?>(
-      future: _dbService.getStrokesFor(kanji.literal),
-      builder: (context, snapshot) {
-        final strokes = snapshot.data;
-        if (strokes == null || strokes.outlines.isEmpty) {
-          return SizedBox(
-            width: size,
-            height: size,
-            child: Center(
-              child: Text(
-                kanji.literal,
-                style: theme.textTheme.displaySmall,
-              ),
-            ),
-          );
-        }
-        return StrokeOrderDiagram(strokes: strokes, size: size);
-      },
-    );
-  }
-
-  Widget _buildKanjiCard(BuildContext context, KanjiEntry kanji) {
-    final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildStrokeOrder(context, kanji),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    kanji.meanings,
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  // Kun before on, matching how kanji dictionaries print them.
-                  if (kanji.kunReadings != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        kanji.kunReadings!,
-                        style: theme.textTheme.bodyMedium,
-                      ),
-                    ),
-                  if (kanji.onReadings != null)
-                    Text(
-                      kanji.onReadings!,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: [
-                      if (kanji.strokeCount != null)
-                        _kanjiChip(context, '${kanji.strokeCount} strokes'),
-                      // Only grades 1–6 are a meaningful "taught in year N";
-                      // 8/9/10 are set membership, not a year.
-                      if (kanji.isKyoiku)
-                        _kanjiChip(context, 'grade ${kanji.grade}'),
-                      if (kanji.freq != null)
-                        _kanjiChip(context, 'freq #${kanji.freq}'),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _kanjiChip(BuildContext context, String label) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        label,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildExamples(BuildContext context, DictionaryEntry entry) {
-    return FutureBuilder<List<ExampleSentence>>(
-      future: _dbService.getExamples(entry.id),
-      builder: (context, snapshot) {
-        final examples = snapshot.data ?? const [];
-        if (examples.isEmpty) return const SizedBox.shrink();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 16),
-            Text(
-              'Examples',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            ...examples.map((ex) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      ex.ja,
-                      style: Theme.of(context).textTheme.bodyLarge,
-                    ),
-                    if (ex.en.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          ex.en,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                        ),
-                      ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        );
-      },
     );
   }
 }

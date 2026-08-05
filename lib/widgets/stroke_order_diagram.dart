@@ -1,6 +1,68 @@
 import 'package:flutter/material.dart';
 import '../models/dictionary_entry.dart';
+import '../services/database_service.dart';
 import '../utils/svg_path.dart';
+
+/// Stroke order for a character by literal, falling back to the plain glyph.
+///
+/// Owns the lookup so callers don't have to: KanjiVG covers ~6,700 of
+/// KANJIDIC2's ~10,400 characters, so "no diagram" is a normal outcome and
+/// every caller would otherwise repeat the same null handling.
+///
+/// The future is created once in [initState] rather than inline in a
+/// `FutureBuilder`. The entry sheet is a [DraggableScrollableSheet], whose
+/// builder re-runs on every drag frame — an inline future would re-query the
+/// database each time the user nudged the sheet.
+class KanjiStrokeView extends StatefulWidget {
+  const KanjiStrokeView({super.key, required this.literal, this.size = 88});
+
+  final String literal;
+  final double size;
+
+  @override
+  State<KanjiStrokeView> createState() => _KanjiStrokeViewState();
+}
+
+class _KanjiStrokeViewState extends State<KanjiStrokeView> {
+  late Future<KanjiStrokes?> _strokes;
+
+  @override
+  void initState() {
+    super.initState();
+    _strokes = DatabaseService().getStrokesFor(widget.literal);
+  }
+
+  @override
+  void didUpdateWidget(KanjiStrokeView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.literal != widget.literal) {
+      _strokes = DatabaseService().getStrokesFor(widget.literal);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<KanjiStrokes?>(
+      future: _strokes,
+      builder: (context, snapshot) {
+        final strokes = snapshot.data;
+        if (strokes == null || strokes.outlines.isEmpty) {
+          return SizedBox(
+            width: widget.size,
+            height: widget.size,
+            child: Center(
+              child: Text(
+                widget.literal,
+                style: TextStyle(fontSize: widget.size * 0.62),
+              ),
+            ),
+          );
+        }
+        return StrokeOrderDiagram(strokes: strokes, size: widget.size);
+      },
+    );
+  }
+}
 
 /// Animated stroke-order diagram for a single character.
 ///

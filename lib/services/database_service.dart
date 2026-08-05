@@ -272,6 +272,51 @@ class DatabaseService {
         .toList();
   }
 
+  /// The KANJIDIC2 entry for a single character, or null if it has none
+  /// (readings-only JIS X 0212 characters were dropped at import time).
+  Future<KanjiEntry?> getKanji(String literal) async {
+    final db = await database;
+    final rows = await db.query(
+      'kanji',
+      where: 'literal = ?',
+      whereArgs: [literal],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return KanjiEntry.fromMap(rows.first);
+  }
+
+  /// Words written with [literal] anywhere in them — the "Compounds" list on
+  /// the kanji detail screen (免 → 免許, 免疫, 御免 …).
+  ///
+  /// This has to be a `LIKE '%x%'` scan, which no index can serve. FTS isn't an
+  /// option either: `dictionary_fts` uses the unicode61 tokenizer, which treats
+  /// an unspaced run of CJK as a *single* token, so 免許 is never reachable by
+  /// matching 免. The scan is ~300k rows and runs once, lazily, when the screen
+  /// opens — the same budget as the examples query, not the search path.
+  ///
+  /// Grouped by `sequence` for the same reason the flashcard decks are (see
+  /// [_deckSelect]): without it, 免許 would appear again as each of its rarer
+  /// spellings. Common words come first, then words that *begin* with the
+  /// character, then shorter ones — so the everyday compounds lead.
+  Future<List<DictionaryEntry>> getCompoundsFor(String literal, {int limit = 60}) async {
+    if (literal.isEmpty) return const [];
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT * FROM (
+        SELECT $_deckSelect
+        FROM dictionary
+        WHERE term LIKE ?
+        GROUP BY sequence
+      )
+      ORDER BY is_common DESC, score DESC,
+        (CASE WHEN term LIKE ? THEN 0 ELSE 1 END),
+        length(term) ASC
+      LIMIT ?
+    ''', ['%$literal%', '$literal%', limit]);
+    return rows.map(DictionaryEntry.fromMap).toList();
+  }
+
   /// Stroke-order outlines for [literal], or null if KanjiVG has no entry.
   ///
   /// KanjiVG covers ~6,700 characters against KANJIDIC2's ~10,400, so a

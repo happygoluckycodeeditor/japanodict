@@ -84,6 +84,12 @@ class KanjiEntry {
   /// Frequency rank across a corpus of newspaper text — 1 is the most common
   /// of the ~2,500 ranked characters. Null means unranked, not "rare-ish".
   final int? freq;
+
+  /// KANJIDIC2's **pre-2010 JLPT level (1–4)**, which is a different scale from
+  /// [DictionaryEntry.jlpt]'s N1–N5 and covers only ~2,230 characters. Label it
+  /// as the old four-level exam wherever it's shown — rendering it as "N1"
+  /// would quietly claim something the data doesn't say.
+  final int? jlptOld;
   final String? onReadings;
   final String? kunReadings;
   final String meanings;
@@ -94,6 +100,7 @@ class KanjiEntry {
     this.grade,
     this.strokeCount,
     this.freq,
+    this.jlptOld,
     this.onReadings,
     this.kunReadings,
     required this.meanings,
@@ -106,6 +113,7 @@ class KanjiEntry {
       grade: map['grade'] as int?,
       strokeCount: map['stroke_count'] as int?,
       freq: map['freq'] as int?,
+      jlptOld: map['jlpt_old'] as int?,
       onReadings: map['on_readings'] as String?,
       kunReadings: map['kun_readings'] as String?,
       meanings: map['meanings'] as String,
@@ -120,6 +128,17 @@ class KanjiEntry {
   /// True for the jōyō kanji taught in compulsory schooling (grades 1–6) —
   /// used to show a "grade N" badge only where that number means something.
   bool get isKyoiku => grade != null && grade! >= 1 && grade! <= 6;
+
+  /// [grade] spelled out, since 8/9/10 are set membership rather than a school
+  /// year and printing them as "grade 9" reads as nine years of schooling.
+  String? get gradeLabel {
+    final g = grade;
+    if (g == null) return null;
+    if (g >= 1 && g <= 6) return 'Grade $g (kyōiku)';
+    if (g == 8) return 'Jōyō';
+    if (g == 9 || g == 10) return 'Jinmeiyō (name use)';
+    return 'Grade $g';
+  }
 
   static List<String> _split(String? value) {
     if (value == null) return const [];
