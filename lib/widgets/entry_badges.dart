@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 /// The small labels that sit next to a headword or a kanji.
 ///
 /// They live here rather than in one screen because the same three now appear
@@ -17,13 +19,15 @@ class CommonBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFF8DC63F),
+        color: BrandColors.yellow,
         borderRadius: BorderRadius.circular(4),
       ),
       child: const Text(
         'common',
         style: TextStyle(
-          color: Colors.white,
+          // Dark ink, not white — the pill carries its own opaque background,
+          // so it looks identical in both themes and white would vanish on it.
+          color: BrandColors.ink,
           fontSize: 12,
           fontWeight: FontWeight.w600,
         ),
@@ -46,7 +50,7 @@ class JlptBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFF909DC0),
+        color: BrandColors.red,
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(

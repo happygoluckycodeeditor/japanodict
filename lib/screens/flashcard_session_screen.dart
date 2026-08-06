@@ -6,6 +6,7 @@ import '../models/dictionary_entry.dart';
 import '../models/flashcard.dart';
 import '../services/database_service.dart';
 import '../services/favourites_service.dart';
+import '../theme/app_theme.dart';
 import '../widgets/stroke_order_diagram.dart';
 
 /// A run through one deck: tap to flip, swipe (or use the buttons) to move on,
@@ -151,7 +152,11 @@ class _FlashcardSessionScreenState extends State<FlashcardSessionScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+            Icon(
+              Icons.error_outline,
+              size: 48,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
             const SizedBox(height: 16),
             Text(
               "Couldn't load this deck",
@@ -341,7 +346,7 @@ class _FlipCardState extends State<_FlipCard>
                 icon: Icon(
                   widget.isFavourite ? Icons.star : Icons.star_border,
                   color: widget.isFavourite
-                      ? const Color(0xFFE8A33D)
+                      ? AppTheme.starColor(theme.brightness)
                       : theme.colorScheme.onSurfaceVariant,
                 ),
                 tooltip: widget.isFavourite
