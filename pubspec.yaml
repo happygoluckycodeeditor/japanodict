@@ -59,6 +59,17 @@ dependencies:
   # with MissingPluginException. 0.14.2 has matching names.
   google_mlkit_digital_ink_recognition: ^0.14.0
 
+  # OCR (scan-a-photo lookup) — on-device ML Kit text recognition.
+  # Capped at 0.15.x transitively: the pin above holds google_mlkit_commons at
+  # 0.11.x, and text recognition 0.16.0 requires commons 0.12.0. Bumping
+  # either means testing BOTH plugins on a device, not just `flutter analyze`
+  # — the digital-ink breakage described above compiles cleanly.
+  google_mlkit_text_recognition: ^0.15.0
+
+  # Camera capture / gallery picking for the OCR screen. Still images only;
+  # there is deliberately no live-camera stream.
+  image_picker: ^1.2.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

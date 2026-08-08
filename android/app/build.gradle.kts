@@ -39,6 +39,19 @@ android {
     }
 }
 
+dependencies {
+    // Required by the OCR screen, and it has to live here rather than in the
+    // plugin: google_mlkit_text_recognition bundles only the Latin recogniser
+    // and declares every other script `compileOnly`. Without this line the
+    // plugin still builds and analyzes clean, but asking it for
+    // TextRecognitionScript.japanese throws at runtime on a device.
+    //
+    // This is a bundled model (~4MB in the APK), not a Play-services download
+    // — unlike the handwriting ink model, OCR works offline on first launch
+    // and on non-Play-Store emulator images.
+    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+}
+
 flutter {
     source = "../.."
 }

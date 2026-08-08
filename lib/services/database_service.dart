@@ -481,6 +481,50 @@ class DatabaseService {
     return out;
   }
 
+  /// Exact term-or-reading lookup for a batch of candidate strings.
+  ///
+  /// This is the OCR/text-scanning counterpart to [searchEntries], and it is
+  /// deliberately *not* that method: search is five fuzzy tiers ending in a
+  /// gloss `LIKE`, which is right when a human is typing and wrong here. A
+  /// deinflection candidate is a hypothesis — 話る either is a dictionary form
+  /// or it isn't — and letting it match on a gloss substring would confirm
+  /// nonsense hypotheses and pick the wrong word for the sentence.
+  ///
+  /// Takes the whole candidate set at once so a tap costs one round trip
+  /// rather than one per substring length. Both `term` and `reading` are
+  /// indexed, so the `IN` scan is cheap.
+  Future<List<DictionaryEntry>> lookupTerms(Iterable<String> terms) async {
+    final unique = terms.where((t) => t.isNotEmpty).toSet().toList();
+    if (unique.isEmpty) return const [];
+    final db = await database;
+
+    // SQLite's default host-parameter ceiling is 999 and each term is bound
+    // twice (term and reading), so chunk well under half of it.
+    const chunkSize = 400;
+    final results = <DictionaryEntry>[];
+    final seenIds = <int>{};
+    for (var i = 0; i < unique.length; i += chunkSize) {
+      final chunk = unique.sublist(
+        i,
+        i + chunkSize < unique.length ? i + chunkSize : unique.length,
+      );
+      final placeholders = List.filled(chunk.length, '?').join(',');
+      final rows = await db.query(
+        'dictionary',
+        columns: _columns,
+        where: 'term IN ($placeholders) OR reading IN ($placeholders)',
+        whereArgs: [...chunk, ...chunk],
+        orderBy: 'is_common DESC, score DESC',
+      );
+      for (final row in rows) {
+        if (seenIds.add(row['id'] as int)) {
+          results.add(DictionaryEntry.fromMap(row));
+        }
+      }
+    }
+    return results;
+  }
+
   Future<void> close() async {
     final db = await database;
     await db.close();

@@ -60,6 +60,15 @@ class CreditsScreen extends StatelessWidget {
       licence: 'Google APIs Terms of Service',
       url: 'https://developers.google.com/ml-kit',
     ),
+    _DataSource(
+      name: 'ML Kit Text Recognition',
+      description:
+          'On-device OCR for the scan-a-photo lookup. Images are processed '
+          'on your device and are never uploaded.',
+      copyright: '© Google LLC',
+      licence: 'Google APIs Terms of Service',
+      url: 'https://developers.google.com/ml-kit',
+    ),
   ];
 
   @override
@@ -87,8 +96,52 @@ class CreditsScreen extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
+          const Divider(height: 32),
+          _buildSoftwareLicences(context),
         ],
       ),
+    );
+  }
+
+  /// The other half of the obligation: the cards above credit the *data*, but
+  /// the app also ships MIT- and BSD-licensed packages (the ML Kit plugins,
+  /// image_picker, sqflite and the rest), and both licences require the
+  /// copyright notice to travel with the binary.
+  ///
+  /// `showLicensePage` is the whole implementation — Flutter's
+  /// `LicenseRegistry` already collects the LICENSE file of every package
+  /// linked into the build, so this stays correct as dependencies change
+  /// instead of drifting out of date the way a hand-written list would.
+  Widget _buildSoftwareLicences(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Software',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'JapanoDict is built with Flutter and a number of open-source '
+          'packages, each under its own licence.',
+          style: theme.textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => showLicensePage(
+            context: context,
+            applicationName: 'JapanoDict',
+            applicationLegalese:
+                'Dictionary data © EDRDG, Ulrich Apel, Tatoeba contributors '
+                'and others — see the credits above.',
+          ),
+          icon: const Icon(Icons.article_outlined),
+          label: const Text('Open-source licences'),
+        ),
+      ],
     );
   }
 

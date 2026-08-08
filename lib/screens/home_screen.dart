@@ -5,6 +5,7 @@ import '../models/dictionary_entry.dart';
 import '../services/database_service.dart';
 import 'credits_screen.dart';
 import 'flashcards_screen.dart';
+import 'ocr_screen.dart';
 import '../widgets/entry_badges.dart';
 import '../widgets/entry_detail_sheet.dart';
 import '../widgets/kanji_draw_pad.dart';
@@ -354,6 +355,19 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+          ListTile(
+            leading: const Icon(Icons.document_scanner_outlined),
+            title: const Text('Scan text'),
+            subtitle: const Text('Look up words in a photo'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const OcrScreen()),
+              );
+            },
+          ),
+          const Divider(),
           ListTile(
             leading: const Icon(Icons.style_outlined),
             title: const Text('Flashcards'),
