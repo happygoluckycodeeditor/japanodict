@@ -5,6 +5,7 @@ import '../models/dictionary_entry.dart';
 import '../services/database_service.dart';
 import '../services/history_service.dart';
 import 'credits_screen.dart';
+import 'anki_decks_screen.dart';
 import 'flashcards_screen.dart';
 import 'ocr_screen.dart';
 import '../widgets/entry_badges.dart';
@@ -175,6 +176,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openAnkiDecks() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AnkiDecksScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -273,6 +281,8 @@ class _HomeScreenState extends State<HomeScreen> {
               height: actionsHeight,
               child: _buildQuickActions(context),
             ),
+            const SizedBox(height: 12),
+            _buildAnkiAction(context),
             const SizedBox(height: 16),
           ],
         );
@@ -399,6 +409,26 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// The Anki tile sits *below* the pair above, full width, and outside their
+  /// fixed-height box.
+  ///
+  /// Not a third column in that Row: three tiles across leaves each too narrow
+  /// for its subtitle, and this is the one that needs explaining — "Anki
+  /// decks" alone doesn't say what the app will do with them. It also can't go
+  /// inside the sized box, because that height was measured for one row of
+  /// tiles; sizing to its own content keeps the two independent.
+  Widget _buildAnkiAction(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return _buildActionTile(
+      icon: Icons.inventory_2_outlined,
+      label: 'Anki decks',
+      subtitle: 'Look up the words in your own cards',
+      background: scheme.tertiaryContainer,
+      foreground: scheme.onTertiaryContainer,
+      onTap: _openAnkiDecks,
     );
   }
 
@@ -686,6 +716,15 @@ class _HomeScreenState extends State<HomeScreen> {
             onTap: () {
               Navigator.pop(context);
               _openFlashcards();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.inventory_2_outlined),
+            title: const Text('Anki decks'),
+            subtitle: const Text('Look up the words in your own cards'),
+            onTap: () {
+              Navigator.pop(context);
+              _openAnkiDecks();
             },
           ),
           const Divider(),

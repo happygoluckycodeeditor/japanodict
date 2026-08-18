@@ -41,6 +41,17 @@ class JpText {
     return text.runes.any(isWordChar);
   }
 
+  /// True if [text] contains at least one CJK ideograph.
+  ///
+  /// Distinct from [hasJapanese], and the distinction carries weight: a run of
+  /// kana with no kanji in it is where greedy longest-match segmentation is
+  /// least reliable, because there are no ideographs to anchor a boundary.
+  /// `AnkiNote.lookupFields` uses this to tell a card's reading field from its
+  /// expression field without knowing what the note type called them.
+  static bool hasKanji(String text) {
+    return text.runes.any(isKanji);
+  }
+
   /// Index of the first character at or after [start] that can begin a word,
   /// or -1 if the rest of [text] has none.
   ///

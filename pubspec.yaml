@@ -69,6 +69,8 @@ dependencies:
   # Camera capture / gallery picking for the OCR screen. Still images only;
   # there is deliberately no live-camera stream.
   image_picker: ^1.2.2
+  file_picker: ^11.0.3
+  archive: ^4.0.9
 
 dev_dependencies:
   flutter_test:
