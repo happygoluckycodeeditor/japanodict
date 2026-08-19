@@ -274,6 +274,38 @@ class DatabaseService {
     return [...probes, query];
   }
 
+  /// An FTS query that matches **every** word of a multi-word query, in any
+  /// order and anywhere in the definition: `medical treatment` becomes
+  /// `medical treatment*`. Null for a single-word query, which the tiers above
+  /// already cover, and for anything with no usable token in it.
+  ///
+  /// The gloss tiers above search the query as a *phrase*, so they only reach
+  /// a definition holding those words adjacent and in the order typed:
+  /// "dealing with" finds 処置 and "with dealing" finds nothing at all. Nor
+  /// does a user typing two words necessarily expect them adjacent —
+  /// "measure treatment" is a reasonable way to grope for 処置 and matched
+  /// nothing whatsoever. FTS4's default syntax ANDs bare tokens, which is
+  /// exactly that weaker "all of these words" match.
+  ///
+  /// The last token keeps its `*` because search is live: the word under the
+  /// cursor is usually half-typed, and "medical treat" has to match while the
+  /// user is still going.
+  ///
+  /// Tokens are split on non-alphanumerics rather than escaped, which is both
+  /// safer and more faithful. `"`, `*`, `^`, `-` and `:` are FTS operators, so
+  /// a stray one is a syntax error the user cannot see the cause of — and
+  /// splitting on them is what unicode61 did when it indexed the column, so
+  /// "one's" tokenises here exactly as it did there.
+  static String? ftsAllWordsQuery(String query) {
+    final tokens = query
+        .split(RegExp(r'[^\p{L}\p{N}]+', unicode: true))
+        .where((t) => t.isNotEmpty)
+        .toList();
+    if (tokens.length < 2) return null;
+    final last = tokens.removeLast();
+    return '${tokens.join(' ')} $last*';
+  }
+
   /// Ranks a gloss match by **how central the query is to the entry's
   /// meaning**.
   ///
@@ -507,6 +539,23 @@ $_glossRankOrderBy
         ]));
       } catch (e) {
         debugPrint('FTS prefix search failed: $e');
+      }
+    }
+
+    // Tier 4: every word of a multi-word query, in any order. The two gloss
+    // tiers above are phrase matches, so until here "measure treatment" and
+    // "treatment for a disease" found nothing at all — see [ftsAllWordsQuery].
+    // Single-word queries skip it: it would repeat tier 3 exactly.
+    final allWords = ftsAllWordsQuery(foldedFts);
+    if (results.length < limit && allWords != null) {
+      try {
+        addAll(await db.rawQuery(_glossRankQuery, [
+          ..._rankArgs(foldedFts, whole: false),
+          allWords,
+          (limit - results.length) * _overfetch,
+        ]));
+      } catch (e) {
+        debugPrint('FTS all-words search failed: $e');
       }
     }
 

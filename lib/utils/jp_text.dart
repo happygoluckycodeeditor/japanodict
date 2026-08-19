@@ -35,6 +35,35 @@ class JpText {
         (rune >= 0xF900 && rune <= 0xFAFF); //      Compatibility
   }
 
+  /// True for a kana that can only ever *follow* another one, so a word
+  /// boundary must never fall immediately before it.
+  ///
+  /// The small vowel kana (ゃゅょ and friends) are the second half of a
+  /// digraph — しょ is one mora written with two code points — and ー only
+  /// lengthens the vowel in front of it. No word begins with any of them.
+  ///
+  /// This is a real constraint on segmentation, not a nicety. Without it the
+  /// greedy longest-match in `text_lookup_service.dart` split ぜせいしょち
+  /// after ぜせいし, because that is the masu stem of 是正する and one
+  /// character longer than ぜせい — leaving ょ orphaned and ち to match 血
+  /// "blood". A candidate that ends mid-digraph is not a word, whatever the
+  /// dictionary says about it.
+  ///
+  /// The sokuon っ is deliberately **not** here even though no ordinary word
+  /// starts with one either: it is genuinely word-initial in the suffixes the
+  /// deinflector strips (ソフトっぽい), so forbidding a boundary before it
+  /// would lose matches rather than fix them.
+  static bool isTrailingKana(int rune) => _trailingKana.contains(rune);
+
+  static const Set<int> _trailingKana = {
+    0x3041, 0x3043, 0x3045, 0x3047, 0x3049, // ぁぃぅぇぉ
+    0x3083, 0x3085, 0x3087, 0x308E, //         ゃゅょゎ
+    0x30A1, 0x30A3, 0x30A5, 0x30A7, 0x30A9, // ァィゥェォ
+    0x30E3, 0x30E5, 0x30E7, 0x30EE, //         ャュョヮ
+    0x30F5, 0x30F6, //                         ヵヶ
+    0x30FC, //                                 ー
+  };
+
   /// True if [text] holds at least one character worth looking up. Used to
   /// skip OCR lines that came back as pure punctuation or Latin.
   static bool hasJapanese(String text) {

@@ -53,4 +53,22 @@ void main() {
       expect(JpText.wordRunLength('。寒い', 0), 0);
     });
   });
+
+  group('isTrailingKana', () {
+    test('accepts the kana that can only follow another', () {
+      // Small vowels are the second half of a digraph and ー only lengthens
+      // what precedes it, so a word boundary can never fall before one.
+      for (final c in ['ゃ', 'ゅ', 'ょ', 'ぁ', 'ぅ', 'ャ', 'ョ', 'ヶ', 'ー']) {
+        expect(JpText.isTrailingKana(c.codeUnitAt(0)), isTrue, reason: c);
+      }
+    });
+
+    test('rejects full-size kana, kanji and the sokuon', () {
+      // っ is excluded on purpose: it really does start the suffixes the
+      // deinflector strips (ソフトっぽい).
+      for (final c in ['あ', 'し', 'ヤ', 'ン', 'っ', 'ッ', '日', 'a']) {
+        expect(JpText.isTrailingKana(c.codeUnitAt(0)), isFalse, reason: c);
+      }
+    });
+  });
 }

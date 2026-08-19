@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import '../models/dictionary_entry.dart';
 import '../services/database_service.dart';
 import '../services/history_service.dart';
+import '../services/text_lookup_service.dart';
+import '../utils/jp_text.dart';
+import '../utils/romaji.dart';
 import 'credits_screen.dart';
 import 'anki_decks_screen.dart';
 import 'flashcards_screen.dart';
@@ -24,10 +27,17 @@ class _HomeScreenState extends State<HomeScreen> {
   final FocusNode _searchFocus = FocusNode();
   final DatabaseService _dbService = DatabaseService();
   final HistoryService _history = HistoryService();
+  final TextLookupService _lookup = TextLookupService();
 
   Timer? _debounce;
   Timer? _historyIdle;
   List<DictionaryEntry> _results = [];
+
+  /// Words found *inside* the query when the dictionary has no entry for the
+  /// whole of it — 是正処置 → 是正 + 処置. Always rendered below [_results]
+  /// and under their own heading, never mixed in: a partial match is not an
+  /// answer to what was typed, it is the closest the dictionary can get.
+  List<TokenMatch> _partials = const [];
   bool _isLoading = false;
   String _query = '';
   bool _showDrawPad = false;
@@ -118,6 +128,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _query = '';
         _results = [];
+        _partials = const [];
         _isLoading = false;
       });
       return;
@@ -139,22 +150,132 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _runSearch(String text) async {
-    final results = await _dbService.searchEntries(text.trim());
+    final query = text.trim();
+    final results = await _dbService.searchEntries(query);
     if (!mounted || _searchController.text != text) return;
+
+    // A Japanese query that matched nothing gets the second pass below, so the
+    // spinner stays up over it. Otherwise "No results found" flashes on screen
+    // for the query that is a moment away from being broken down into the
+    // words it is made of.
+    final decomposing = results.isEmpty && _decomposable(query, results) != null;
     setState(() {
       _results = results;
-      _isLoading = false;
+      _partials = const [];
+      _isLoading = decomposing;
     });
 
     // Only a query that found something is worth remembering — a run of
     // no-result prefixes on the way to a real word isn't a search the user
     // would ever want to replay.
     _historyIdle?.cancel();
-    if (results.isNotEmpty) {
-      _historyIdle = Timer(_historyIdleDelay, () {
-        if (_searchController.text == text) _rememberQuery();
-      });
+    if (results.isNotEmpty) _rememberQueryWhenSettled(text);
+
+    unawaited(_findPartials(text, results));
+  }
+
+  /// Second pass for a query the dictionary can't match whole.
+  ///
+  /// Runs *after* the results are on screen rather than inside the search,
+  /// because it costs a database round trip per word and the common case — a
+  /// query that matched — throws the answer away. Making the results list wait
+  /// on it would tax every keystroke to serve the few that need it.
+  Future<void> _findPartials(
+    String text,
+    List<DictionaryEntry> results,
+  ) async {
+    final query = _decomposable(text.trim(), results);
+    if (query == null) return;
+
+    List<TokenMatch> matches;
+    try {
+      matches = await _lookup.decomposeQuery(query);
+    } catch (e) {
+      debugPrint('Query decomposition failed: $e');
+      matches = const [];
     }
+    if (!mounted || _searchController.text != text) return;
+
+    // An all-kana query only gets to show a breakdown that accounts for the
+    // whole of it. Greedy longest-match has no lookahead and, with no
+    // ideographs to anchor a boundary, kana is where it is least reliable —
+    // and a wrong split here doesn't look wrong, it looks like an answer:
+    // every leftover fragment is a real word, so ち becomes 血 "blood" under
+    // a heading that says this is what the query is made of. Leftovers are
+    // the tell, so a breakdown that leaves any are dropped whole. Kanji input
+    // keeps its partial breakdowns: 是正処置X still owes the user 是正 + 処置.
+    if (!JpText.hasKanji(query) && !_coversWholeQuery(query, matches)) {
+      matches = const [];
+    }
+
+    // Drop anything the results already show. Typing 楽 segments to 楽, and a
+    // "partial matches" card repeating the card directly above it is noise.
+    // Keyed by `sequence` to match the collapse `searchEntries` does, with the
+    // id as the fallback for the few rows that have no sequence.
+    final shown = {for (final e in results) e.sequence ?? -e.id};
+    final partials = matches
+        .where((m) => !shown.contains(m.best.sequence ?? -m.best.id))
+        .toList();
+
+    setState(() {
+      _partials = partials;
+      _isLoading = false;
+    });
+
+    // A query that only decomposed still answered the user, so it is still
+    // worth remembering — 是正処置 is exactly the kind of word someone looks
+    // up twice.
+    if (results.isEmpty && partials.isNotEmpty) {
+      _rememberQueryWhenSettled(text);
+    }
+  }
+
+  /// True when [matches] account for every character of [query] that could
+  /// belong to a word, leaving nothing skipped between or around them.
+  bool _coversWholeQuery(String query, List<TokenMatch> matches) {
+    if (matches.isEmpty) return false;
+    var next = 0;
+    for (final match in matches) {
+      // Anything skipped on the way to this match had better not be a word
+      // character — punctuation and spaces are fine to step over.
+      if (JpText.nextWordStart(query.substring(next, match.start), 0) >= 0) {
+        return false;
+      }
+      next = match.end;
+    }
+    return JpText.nextWordStart(query, next) < 0;
+  }
+
+  /// The text to break down, or null if this query shouldn't be.
+  ///
+  /// Japanese input is taken as typed. Romaji is converted first — "tabemono"
+  /// is as unmatchable as 食べ物 was — but only once the search has come back
+  /// empty, and that asymmetry is deliberate: the kana behind romaji is a
+  /// *guess*, the same guess whose prefix matches `searchEntries` demotes
+  /// below the gloss tier. "china" converts to ちな, a real word, so
+  /// decomposing an English query that already found its answer would staple
+  /// a Japanese word onto it that the user never asked about.
+  String? _decomposable(String query, List<DictionaryEntry> results) {
+    if (JpText.hasJapanese(query)) return query;
+    if (results.isNotEmpty) return null;
+    final folded = query.toLowerCase();
+    if (!Romaji.looksLikeRomaji(folded)) return null;
+    final kana = Romaji.toHiragana(folded);
+    // Every character has to have converted. `toHiragana` is best-effort and
+    // passes what it can't map straight through, so an English phrase comes
+    // back as あcちおn cおrrecちゔぇ — which segments into a round trip per
+    // character and can only ever confirm junk.
+    if (kana == folded || !kana.runes.every(JpText.isWordChar)) return null;
+    return kana;
+  }
+
+  /// Commits [text] to history once it has sat unchanged for
+  /// [_historyIdleDelay].
+  void _rememberQueryWhenSettled(String text) {
+    _historyIdle?.cancel();
+    _historyIdle = Timer(_historyIdleDelay, () {
+      if (_searchController.text == text) _rememberQuery();
+    });
   }
 
   /// Replays a remembered query. This only refills the field — the controller's
@@ -589,7 +710,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_results.isEmpty) {
+    if (_results.isEmpty && _partials.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -616,15 +737,69 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    // Results, then the partial-match section as a heading plus its own cards
+    // in the same scroll view. One list rather than two stacked ones: the
+    // partials are the *tail* of the answer, and a separate pane for them
+    // would either take space away from real results or need its own scrollbar
+    // for what is usually two cards.
+    final partialsStart = _results.length + 1;
     return ListView.builder(
-      itemCount: _results.length,
+      itemCount: _results.length + (_partials.isEmpty ? 0 : 1 + _partials.length),
       // Result cards are stateless — nothing in one is worth preserving when it
       // scrolls out of view — so the default keep-alive machinery is pure
       // overhead on a list that can be 50 cards long.
       addAutomaticKeepAlives: false,
-      itemBuilder: (context, index) => _buildResultCard(_results[index]),
+      itemBuilder: (context, index) {
+        if (index < _results.length) return _buildResultCard(_results[index]);
+        if (index < partialsStart) return _buildPartialHeader(context);
+        final match = _partials[index - partialsStart];
+        return _buildResultCard(match.best, from: match);
+      },
     );
   }
+
+  /// Heading over the decomposition, so a partial match can never be read as
+  /// an entry for what was actually typed.
+  Widget _buildPartialHeader(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(top: _results.isEmpty ? 4 : 16, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.call_split,
+                size: 18,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Partial matches',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              _results.isEmpty
+                  ? 'No entry for "$_query", but it is made of these words'
+                  : 'Words found inside "$_query"',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
 
   /// How many senses a result card shows before collapsing the rest into a
   /// "+N more" line. The detail sheet has the full list, so this only has to
@@ -640,7 +815,13 @@ class _HomeScreenState extends State<HomeScreen> {
   /// - parts of speech are a caption line rather than [Chip]s. Chips carry
   ///   ~48dp of Material tap-target height each for something that isn't
   ///   tappable, which was the single biggest waste in the old card.
-  Widget _buildResultCard(DictionaryEntry entry) {
+  ///
+  /// [from] marks the card as a *partial* match and names the piece of the
+  /// query it came from — see [_buildPartialHeader]. The dictionary form stays
+  /// the headword even then: what was typed is still in the search box a
+  /// centimetre above, and leading with the surface (as the scan screen does,
+  /// where there is no search box) crowded the reading and badges off the row.
+  Widget _buildResultCard(DictionaryEntry entry, {TokenMatch? from}) {
     final theme = Theme.of(context);
     final reading = entry.reading;
     final hasReading = reading != null && reading.isNotEmpty;
@@ -701,6 +882,27 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ],
               ),
+              // Named only when it adds something: the surface is worth
+              // spelling out when it is a conjugation (寒かった → 寒い) or a
+              // slice of a longer query, but not when it is just the reading
+              // already sitting beside the headword.
+              if (from != null &&
+                  from.surface != entry.term &&
+                  (from.isInflected || from.surface != entry.reading))
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    [
+                      'from ${from.surface}',
+                      ...from.reasons,
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
               if (entry.partsOfSpeechList.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
