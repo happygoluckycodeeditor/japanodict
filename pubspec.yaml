@@ -98,6 +98,30 @@ flutter:
   assets:
     - assets/databases/jitendex.db
 
+  # Noto Sans JP is bundled rather than left to the system font, because the
+  # system gets it *wrong*. Flutter asks Android for a Han glyph with no
+  # language tag attached, and Android's fallback chain answers with Noto Sans
+  # CJK **SC** (Simplified Chinese) on any device whose locale isn't Japanese.
+  # The characters are the same code points, so nothing looks broken — the
+  # shapes are just Chinese (直 骨 今 令 曜 differ visibly). For a Japanese
+  # dictionary that is a correctness bug, not a style preference.
+  #
+  # Declared as a *fallback* in app_theme.dart, not as the app font: Latin UI
+  # text keeps the platform default and only CJK falls through to here.
+  #
+  # The two files are static instances cut from the upstream variable font
+  # (`fonttools varLib.instancer wght=400 / wght=700`) — Flutter does not map
+  # `fontWeight` onto a variable font's `wght` axis, so shipping the variable
+  # file directly would render bold headwords as synthetic smeared bold.
+  # Licence: SIL OFL 1.1, see assets/fonts/OFL.txt (credited in credits_screen).
+  fonts:
+    - family: NotoSansJP
+      fonts:
+        - asset: assets/fonts/NotoSansJP-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/NotoSansJP-Bold.ttf
+          weight: 700
+
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 

@@ -128,8 +128,14 @@ class _HomeScreenState extends State<HomeScreen> {
       _isLoading = true;
     });
 
-    // Debounce so we don't hit the database on every keystroke.
-    _debounce = Timer(const Duration(milliseconds: 120), () => _runSearch(text));
+    // Debounce so we don't hit the database on every keystroke. 60ms rather
+    // than the original 120ms: the term/reading tier used to be a full table
+    // scan (~37ms on desktop, several hundred on a low-end phone) and the
+    // debounce was partly hiding it. Now that it plans as an index range scan
+    // the query is ~0.02ms, so the debounce is the only delay left worth
+    // feeling — it just needs to be long enough to skip intermediate
+    // keystrokes, not long enough to absorb a scan.
+    _debounce = Timer(const Duration(milliseconds: 60), () => _runSearch(text));
   }
 
   Future<void> _runSearch(String text) async {
@@ -234,7 +240,20 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _query.isEmpty ? _buildHome(context) : _buildResults(context),
+                // On a first launch (or after a _dbVersion bump) the dictionary
+                // is still being unpacked and *nothing* can be searched yet.
+                // Without this the screen looked idle and a typed query simply
+                // hung on the awaited copy, which reads as the app being broken.
+                child: ValueListenableBuilder<DbPreparation>(
+                  valueListenable: DatabaseService.preparation,
+                  builder: (context, prep, child) {
+                    if (prep.copying) return _buildPreparing(context, prep);
+                    return child!;
+                  },
+                  child: _query.isEmpty
+                      ? _buildHome(context)
+                      : _buildResults(context),
+                ),
               ),
             ),
             if (_showDrawPad)
@@ -504,6 +523,67 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Shown while the bundled dictionary is being unpacked out of the APK.
+  ///
+  /// Deliberately says "Setting up" and not "Downloading": this is a local
+  /// copy from the installed APK to app storage and needs no network at all,
+  /// and the wrong word here would have people blaming their connection.
+  ///
+  /// The bar is determinate whenever the native side could report the asset's
+  /// size, which is the normal case — a one-off wait of several seconds on a
+  /// mid-range phone is exactly where a real percentage is worth the wiring.
+  Widget _buildPreparing(BuildContext context, DbPreparation prep) {
+    final theme = Theme.of(context);
+    final fraction = prep.fraction;
+    const mb = 1024 * 1024;
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.auto_stories_outlined,
+            size: 56,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(height: 20),
+          Text('Setting up the dictionary', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(
+            'Unpacking the offline dictionary. This happens once.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 24),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: fraction,
+                minHeight: 6,
+                backgroundColor: theme.colorScheme.surfaceContainerHighest,
+              ),
+            ),
+          ),
+          if (fraction != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              '${(fraction * 100).round()}%  ·  '
+              '${(prep.copiedBytes / mb).toStringAsFixed(0)} of '
+              '${(prep.totalBytes / mb).toStringAsFixed(0)} MB',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildResults(BuildContext context) {
     if (_isLoading && _results.isEmpty) {
       return const Center(child: CircularProgressIndicator());
@@ -538,6 +618,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return ListView.builder(
       itemCount: _results.length,
+      // Result cards are stateless — nothing in one is worth preserving when it
+      // scrolls out of view — so the default keep-alive machinery is pure
+      // overhead on a list that can be 50 cards long.
+      addAutomaticKeepAlives: false,
       itemBuilder: (context, index) => _buildResultCard(_results[index]),
     );
   }

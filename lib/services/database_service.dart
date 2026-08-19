@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -7,12 +8,51 @@ import 'package:path_provider/path_provider.dart';
 import '../models/dictionary_entry.dart';
 import '../utils/romaji.dart';
 
+/// How far along the one-time copy of the bundled dictionary is.
+///
+/// The copy only runs on a first launch or after a [DatabaseService._dbVersion]
+/// bump, so [idle] is what almost every launch reports.
+class DbPreparation {
+  const DbPreparation({
+    required this.copying,
+    this.copiedBytes = 0,
+    this.totalBytes = 0,
+  });
+
+  static const idle = DbPreparation(copying: false);
+
+  /// True while the asset is being unpacked — the point at which the UI has to
+  /// say something, because nothing can be searched yet.
+  final bool copying;
+  final int copiedBytes;
+  final int totalBytes;
+
+  /// 0.0–1.0, or null when the total isn't known and the bar must stay
+  /// indeterminate rather than inventing a figure.
+  double? get fraction {
+    if (totalBytes <= 0) return null;
+    return (copiedBytes / totalBytes).clamp(0.0, 1.0);
+  }
+}
+
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
   static Future<Database>? _databaseFuture;
 
   /// Channel implemented in MainActivity.kt — see [_copyDatabaseAsset].
   static const MethodChannel _dbChannel = MethodChannel('japanodict/db');
+
+  /// Progress events from the native copy loop in MainActivity.kt.
+  static const EventChannel _dbProgressChannel =
+      EventChannel('japanodict/db_progress');
+
+  /// Live state of the first-run copy, for the UI to render.
+  ///
+  /// A [ValueNotifier] rather than the copy future's own progress because the
+  /// copy is kicked off with `unawaited` from `initState` — the widget needs
+  /// something it can listen to, not something it has to await.
+  static final ValueNotifier<DbPreparation> preparation =
+      ValueNotifier<DbPreparation>(DbPreparation.idle);
 
   factory DatabaseService() {
     return _instance;
@@ -84,6 +124,28 @@ class DatabaseService {
   /// and the reply arrives null.)
   static Future<void> _copyDatabaseAsset(String path) async {
     final sw = Stopwatch()..start();
+
+    // Subscribe *before* asking for the copy, so no early event is missed.
+    // The listener is the only thing that makes the native side emit at all.
+    preparation.value = const DbPreparation(copying: true);
+    StreamSubscription<dynamic>? progress;
+    try {
+      progress = _dbProgressChannel.receiveBroadcastStream().listen(
+        (event) {
+          if (event is! Map) return;
+          preparation.value = DbPreparation(
+            copying: true,
+            copiedBytes: (event['copied'] as num?)?.toInt() ?? 0,
+            totalBytes: (event['total'] as num?)?.toInt() ?? 0,
+          );
+        },
+        // Progress is decoration; losing it must never fail the copy.
+        onError: (Object e) => debugPrint('DatabaseService: progress stream error: $e'),
+      );
+    } catch (e) {
+      debugPrint('DatabaseService: could not subscribe to progress: $e');
+    }
+
     try {
       await _dbChannel.invokeMethod<void>('copyAsset', {
         'assetKey': _dbAsset,
@@ -93,6 +155,9 @@ class DatabaseService {
       return;
     } on MissingPluginException {
       debugPrint('DatabaseService: no native copy channel, falling back to rootBundle');
+    } finally {
+      unawaited(progress?.cancel());
+      preparation.value = DbPreparation.idle;
     }
 
     try {
@@ -107,6 +172,32 @@ class DatabaseService {
   static const _columns = ['id', 'term', 'reading', 'glosses', 'parts_of_speech', 'tags', 'score', 'is_common', 'jlpt', 'sequence'];
   static const _ftsSelect =
       'd.id, d.term, d.reading, d.glosses, d.parts_of_speech, d.tags, d.score, d.is_common, d.jlpt, d.sequence';
+
+  /// Exclusive upper bound for a prefix range scan — [prefix] with its last
+  /// character incremented, so `col >= prefix AND col < bound` selects exactly
+  /// the rows that `col LIKE 'prefix%'` would.
+  ///
+  /// This exists because **`LIKE` cannot use an index here.** SQLite only
+  /// rewrites `LIKE 'x%'` into a range constraint when the index collation
+  /// agrees with the `case_sensitive_like` pragma, and the default (`OFF`,
+  /// ASCII case-insensitive) does not agree with these BINARY indexes. So the
+  /// prefix tier planned as a bare `SCAN dictionary` — all ~296k rows, on
+  /// every keystroke, twice over for romaji input. The range form plans as
+  /// `SEARCH dictionary USING COVERING INDEX idx_term`: ~37ms -> ~0.02ms.
+  ///
+  /// Returns null when no bound is representable, which leaves the caller on
+  /// the `LIKE` path rather than silently scanning a wrong range.
+  static String? _prefixUpperBound(String prefix) {
+    if (prefix.isEmpty) return null;
+    final runes = prefix.runes.toList();
+    var last = runes.last + 1;
+    // Never land inside the surrogate block: String.fromCharCodes would then
+    // build an unpaired surrogate and the comparison would be meaningless.
+    if (last >= 0xD800 && last <= 0xDFFF) last = 0xE000;
+    if (last > 0x10FFFF) return null;
+    runes[runes.length - 1] = last;
+    return String.fromCharCodes(runes);
+  }
 
   Future<List<DictionaryEntry>> searchEntries(String query, {int limit = 50}) async {
     final trimmed = query.trim();
@@ -127,34 +218,55 @@ class DatabaseService {
     // Latin input like "kuruma" is also converted to kana ("くるま") so it can
     // match the readings stored in the dictionary — the way Shirabe Jisho does.
     // The English text is still searched too (so "car" keeps working).
-    final kana = Romaji.looksLikeRomaji(trimmed) ? Romaji.toHiragana(trimmed) : null;
-    final termTargets = <String>{trimmed, if (kana != null && kana != trimmed) kana};
+    // Folded to lower case because the range scan below compares with BINARY
+    // collation, where the old `LIKE` was ASCII case-insensitive. `term` and
+    // `reading` hold no upper-case character anywhere in the database (checked
+    // against all 296k rows), so folding the *query* can only ever restore a
+    // match the old path would have made — never lose one. A no-op for kana
+    // and kanji input.
+    final folded = trimmed.toLowerCase();
+    final kana = Romaji.looksLikeRomaji(folded) ? Romaji.toHiragana(folded) : null;
+    final termTargets = <String>{folded, if (kana != null && kana != folded) kana};
 
-    // Common words (Jisho's "common word" flag) are floated to the top of
-    // every tier so the everyday word lands first.
-    // Tier 0: exact term/reading match (e.g. typing 猫, ねこ, or "kuruma"→くるま).
-    for (final target in termTargets) {
-      addAll(await db.query(
-        'dictionary',
-        columns: _columns,
-        where: 'term = ? OR reading = ?',
-        whereArgs: [target, target],
-        orderBy: 'is_common DESC, score DESC',
-      ));
+    // Tiers 0 and 1 — exact term/reading match, then prefix match — in a
+    // single query. Common words (Jisho's "common word" flag) float to the top
+    // of every tier so the everyday word lands first.
+    //
+    // These used to be one query *per tier per target*, and romaji input has
+    // two targets (the Latin text and its kana), so a keystroke cost four
+    // round trips, each planning as a full table scan. Merging them keeps the
+    // ordering the separate queries expressed — the `tier` column is what puts
+    // exact matches ahead of prefixes — while touching the database once.
+    //
+    // `id ASC` closes the sort. Rows tied on every ranking key used to fall out
+    // in table order because the plan was a full scan; an index range scan
+    // emits them in term order instead, which would reshuffle the tail of the
+    // list (and the cut at LIMIT) between builds for no reason. Pinning it
+    // keeps results stable and matches what the scan used to return.
+    final targets = termTargets.toList();
+    final ranges = <String>[];
+    final rangeArgs = <Object?>[];
+    for (final target in targets) {
+      final upper = _prefixUpperBound(target);
+      if (upper != null) {
+        ranges.add('(term >= ? AND term < ?) OR (reading >= ? AND reading < ?)');
+        rangeArgs.addAll([target, upper, target, upper]);
+      } else {
+        // Unrepresentable bound: fall back rather than scan a wrong range.
+        ranges.add('term LIKE ? OR reading LIKE ?');
+        rangeArgs.addAll(['$target%', '$target%']);
+      }
     }
-
-    // Tier 1: term/reading prefix match, for live search as the user types.
-    for (final target in termTargets) {
-      if (results.length >= limit) break;
-      addAll(await db.query(
-        'dictionary',
-        columns: _columns,
-        where: 'term LIKE ? OR reading LIKE ?',
-        whereArgs: ['$target%', '$target%'],
-        orderBy: 'is_common DESC, score DESC, length(term) ASC',
-        limit: limit - results.length,
-      ));
-    }
+    final exactPlaceholders = List.filled(targets.length, '?').join(',');
+    addAll(await db.rawQuery('''
+      SELECT ${_columns.join(', ')},
+        (CASE WHEN term IN ($exactPlaceholders)
+                OR reading IN ($exactPlaceholders) THEN 0 ELSE 1 END) AS tier
+      FROM dictionary
+      WHERE ${ranges.join(' OR ')}
+      ORDER BY tier, is_common DESC, score DESC, length(term) ASC, id ASC
+      LIMIT ?
+    ''', [...targets, ...targets, ...rangeArgs, limit]));
 
     // Tier 2/3: full-text search over definitions. Whole-word matches (e.g.
     // searching "car" hits the definition word "car") rank above mere

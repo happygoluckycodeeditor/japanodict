@@ -3,6 +3,7 @@ package com.happygoluckycodeeditor.japanodict.japanodict
 import io.flutter.FlutterInjector
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.util.concurrent.Executors
@@ -22,8 +23,26 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterActivity() {
     private val io = Executors.newSingleThreadExecutor()
 
+    /// Sink for copy progress, if Dart is listening. The copy runs regardless —
+    /// progress is reporting, never a precondition — so every use is
+    /// null-guarded rather than the copy waiting for a subscriber.
+    private var progressSink: EventChannel.EventSink? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            PROGRESS_CHANNEL,
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                progressSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                progressSink = null
+            }
+        })
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -60,10 +79,40 @@ class MainActivity : FlutterActivity() {
                 // never leave a half-written database that later looks
                 // complete to the version check.
                 val temp = File("$destPath.tmp")
+
+                // `assets.openFd` gives the uncompressed length without
+                // reading the asset, which is what makes the progress bar
+                // *determinate*. It throws for a compressed asset, so a
+                // failure here degrades to an indeterminate bar (total 0)
+                // rather than failing the copy.
+                val total = try {
+                    assets.openFd(lookupKey).use { it.length }
+                } catch (e: Exception) {
+                    0L
+                }
+                emitProgress(0L, total)
+
                 assets.open(lookupKey).use { input ->
                     temp.outputStream().use { output ->
-                        input.copyTo(output, COPY_BUFFER_BYTES)
+                        val buffer = ByteArray(COPY_BUFFER_BYTES)
+                        var copied = 0L
+                        var lastEmit = 0L
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            copied += read
+                            // Throttle: one event per PROGRESS_STEP_BYTES, not
+                            // one per 256KB buffer. The channel hop marshals to
+                            // the UI thread, and ~340 of them for an 87MB file
+                            // would cost more than the copy they describe.
+                            if (copied - lastEmit >= PROGRESS_STEP_BYTES) {
+                                lastEmit = copied
+                                emitProgress(copied, total)
+                            }
+                        }
                         output.fd.sync()
+                        emitProgress(copied, total)
                     }
                 }
                 if (dest.exists() && !dest.delete()) {
@@ -80,6 +129,19 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /// Posts a progress event to Dart, if anything is listening.
+    ///
+    /// EventSink is not thread-safe and the copy runs on [io], so this hops to
+    /// the UI thread — the same thread the sink was handed to us on.
+    private fun emitProgress(copied: Long, total: Long) {
+        val sink = progressSink ?: return
+        runOnUiThread {
+            // Re-read: the subscription can be cancelled between the hop being
+            // posted and it running.
+            progressSink?.success(mapOf("copied" to copied, "total" to total))
+        }
+    }
+
     override fun onDestroy() {
         io.shutdown()
         super.onDestroy()
@@ -87,6 +149,8 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "japanodict/db"
+        private const val PROGRESS_CHANNEL = "japanodict/db_progress"
         private const val COPY_BUFFER_BYTES = 256 * 1024
+        private const val PROGRESS_STEP_BYTES = 2 * 1024 * 1024
     }
 }

@@ -117,10 +117,20 @@ class AppTheme {
 
   static ThemeData get dark => _build(_darkScheme);
 
+  /// Bundled Japanese face, applied as a *fallback* rather than as the app
+  /// font — see the `fonts:` block in pubspec.yaml for why it is bundled.
+  ///
+  /// Left as a fallback so Latin text keeps the platform default (Roboto), and
+  /// only characters Roboto has no glyph for — i.e. all kana and kanji — drop
+  /// through to Noto Sans JP. Setting it as `fontFamily` instead would restyle
+  /// every English label in the app as a side effect of fixing the kanji.
+  static const List<String> _jpFallback = ['NotoSansJP'];
+
   static ThemeData _build(ColorScheme scheme) {
     return ThemeData(
       colorScheme: scheme,
       useMaterial3: true,
+      fontFamilyFallback: _jpFallback,
       appBarTheme: AppBarTheme(
         centerTitle: true,
         // The app bars set their own pastel `primaryContainer` background, so a

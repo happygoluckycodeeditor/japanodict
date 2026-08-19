@@ -43,6 +43,16 @@ class CreditsScreen extends StatelessWidget {
       url: 'https://tatoeba.org',
     ),
     _DataSource(
+      name: 'Noto Sans JP',
+      description:
+          'The bundled Japanese typeface. Shipped with the app so kanji render '
+          'with Japanese glyph shapes — left to the system font, Android '
+          'serves the Simplified Chinese forms on any non-Japanese device.',
+      copyright: '© The Noto Project Authors',
+      licence: 'SIL Open Font License 1.1',
+      url: 'https://github.com/notofonts/noto-cjk',
+    ),
+    _DataSource(
       name: 'JLPT vocabulary lists',
       description:
           'Unofficial community JLPT level tags — the JLPT organisation '

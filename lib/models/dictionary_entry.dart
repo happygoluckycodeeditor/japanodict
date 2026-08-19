@@ -43,18 +43,25 @@ class DictionaryEntry {
     );
   }
 
-  List<String> get glossList {
-    return glosses.split('•').map((g) => g.trim()).where((g) => g.isNotEmpty).toList();
-  }
+  /// The three list views below are **computed once per entry, not per read.**
+  ///
+  /// They used to split their source string on every access, and they are read
+  /// from `build` methods — `partsOfSpeechList` twice in a single result card —
+  /// so a scrolling results list re-split the same strings on every frame for
+  /// every visible card. `late final` moves that to once per entry; the lists
+  /// are unmodifiable so a future caller can't mutate shared state and can't
+  /// quietly reintroduce a defensive copy.
+  late final List<String> glossList = _split(glosses, '•');
 
-  List<String> get partsOfSpeechList {
-    if (partsOfSpeech == null) return [];
-    return partsOfSpeech!.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
-  }
+  late final List<String> partsOfSpeechList = _split(partsOfSpeech, ',');
 
-  List<String> get tagsList {
-    if (tags == null) return [];
-    return tags!.split(',').map((t) => t.trim()).where((t) => t.isNotEmpty).toList();
+  late final List<String> tagsList = _split(tags, ',');
+
+  static List<String> _split(String? source, String separator) {
+    if (source == null || source.isEmpty) return const [];
+    return List.unmodifiable(
+      source.split(separator).map((s) => s.trim()).where((s) => s.isNotEmpty),
+    );
   }
 }
 
