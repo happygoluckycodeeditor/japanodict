@@ -62,6 +62,16 @@ class CreditsScreen extends StatelessWidget {
       url: 'https://www.tanos.co.uk/jlpt/',
     ),
     _DataSource(
+      name: 'wordfreq',
+      description:
+          'Corpus word-frequency data, used to rank search results so the '
+          'everyday word comes first. Built from Wikipedia, OpenSubtitles, '
+          'web text, Twitter and Reddit.',
+      copyright: '© Robyn Speer and the wordfreq contributors',
+      licence: 'CC BY-SA 4.0',
+      url: 'https://github.com/rspeer/wordfreq',
+    ),
+    _DataSource(
       name: 'ML Kit Digital Ink Recognition',
       description:
           'On-device handwriting recognition for the draw pad. Strokes are '

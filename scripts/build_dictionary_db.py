@@ -138,7 +138,12 @@ CREATE TABLE dictionary (
     score INTEGER,
     sequence INTEGER,
     is_common INTEGER NOT NULL DEFAULT 0,
-    jlpt TEXT
+    jlpt TEXT,
+    -- Corpus frequency rank, 1 = most frequent, NULL = not in the corpus.
+    -- Left NULL here: it comes from a separate source and is written by
+    -- scripts/build_freq_db.py, which must be re-run after this script or
+    -- search ranking loses its only tiebreaker between two common words.
+    freq INTEGER
 );
 CREATE INDEX idx_term ON dictionary(term);
 CREATE INDEX idx_reading ON dictionary(reading);

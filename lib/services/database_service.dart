@@ -81,7 +81,8 @@ class DatabaseService {
   // database after an update.
   // v6 added the KANJIDIC2 `kanji` table (scripts/build_kanji_db.py).
   // v7 added the KanjiVG `kanji_strokes` table (scripts/build_strokes_db.py).
-  static const int _dbVersion = 7;
+  // v8 added the `dictionary.freq` corpus rank (scripts/build_freq_db.py).
+  static const int _dbVersion = 8;
   static const String _dbAsset = 'assets/databases/jitendex.db';
   static const String _dbFile = 'jitendex.db';
 
@@ -170,8 +171,11 @@ class DatabaseService {
   }
 
   static const _columns = ['id', 'term', 'reading', 'glosses', 'parts_of_speech', 'tags', 'score', 'is_common', 'jlpt', 'sequence'];
+  /// Carries `freq` even though [_columns] does not: the ranking sorts on it
+  /// and an outer ORDER BY can only reach a column its subquery emitted. It is
+  /// dropped again by the outer SELECT, so it never crosses to Dart.
   static const _ftsSelect =
-      'd.id, d.term, d.reading, d.glosses, d.parts_of_speech, d.tags, d.score, d.is_common, d.jlpt, d.sequence';
+      'd.id, d.term, d.reading, d.glosses, d.parts_of_speech, d.tags, d.score, d.is_common, d.jlpt, d.sequence, d.freq';
 
   /// Exclusive upper bound for a prefix range scan — [prefix] with its last
   /// character incremented, so `col >= prefix AND col < bound` selects exactly
@@ -199,19 +203,177 @@ class DatabaseService {
     return String.fromCharCodes(runes);
   }
 
+  // -------------------------------------------------------------------
+  // Gloss relevance — the ranking behind the FTS tiers
+  // -------------------------------------------------------------------
+
+  /// Rows asked of each tier per row the caller wants.
+  ///
+  /// The `sequence` collapse in `addAll` throws rows away *after* SQL has
+  /// applied its `LIMIT`, so a tier that fetched exactly `limit` rows could
+  /// hand back half a screen of cards. Three covers the worst spread seen
+  /// (めでたい's four spellings) without materially widening the sort.
+  static const _overfetch = 3;
+
+  /// How many FTS hits get re-ranked; the rest are dropped unseen.
+  ///
+  /// A one-word English query can match thousands of entries ("one" matches
+  /// 11,645) and the relevance keys below cost a string rewrite per row, so
+  /// scoring the whole match set is work the user never sees past `LIMIT`.
+  /// The inner query therefore takes a cheap first cut — common words, then
+  /// score — and only that pool is ranked properly. It is a recall trade: a
+  /// rare word buried behind 400 common ones cannot surface. The cut is
+  /// generous in practice, since only 33k of the 296k rows are common at all.
+  static const _rankCandidates = 400;
+
+  /// Sentinel for "the query heads no gloss item" — larger than any real
+  /// position, so `min()` across the probes still yields the right answer
+  /// when only some of them hit.
+  static const _noHead = 999999;
+
+  /// `glosses` rewritten so every gloss item is bracketed by `'; '`:
+  /// lower-cased, sense separators (` • `) turned into item separators, and
+  /// one separator glued to each end. Probing *this* with `instr` is what
+  /// lets the ranking ask "does the query start a definition" rather than
+  /// only "does it appear inside one".
+  static const _glossProbe =
+      "'; ' || replace(lower(d.glosses), ' • ', '; ') || '; '";
+
+  /// Relevance columns for a gloss match, computed over [_glossProbe] as `g`.
+  ///
+  /// `head_pos` is where the query first *heads* a gloss item, `any_pos`
+  /// where it occurs at all, and `sense1_end` where the first sense stops.
+  /// [_glossRankOrderBy] is built entirely from those three.
+  ///
+  /// The `to `-prefixed probes are not a nicety. JMdict writes every verb
+  /// gloss in the infinitive — 食べる is `to eat` — so without them a search
+  /// for "eat" ranks 食言 ("eat one's words") above it, the query heading
+  /// that entry's definition and merely sitting inside 食べる's.
+  static const _rankColumns = '''
+        min(
+          coalesce(nullif(instr(g, ?), 0), $_noHead),
+          coalesce(nullif(instr(g, ?), 0), $_noHead),
+          coalesce(nullif(instr(g, ?), 0), $_noHead),
+          coalesce(nullif(instr(g, ?), 0), $_noHead)
+        ) AS head_pos,
+        instr(g, ?) AS any_pos,
+        CASE instr(lower(glosses), ' • ')
+          WHEN 0 THEN length(glosses) + 3
+          ELSE instr(lower(glosses), ' • ') + 2
+        END AS sense1_end''';
+
+  /// Arguments for [_rankColumns]. [whole] distinguishes the whole-word tier,
+  /// where the query has to end a gloss item as well as start it, from the
+  /// prefix tier, where "beauti" legitimately heads "beautiful". The prefix
+  /// form repeats its two probes so the SQL text — and so SQLite's statement
+  /// cache entry — stays the same for both.
+  static List<Object?> _rankArgs(String query, {required bool whole}) {
+    final probes = whole
+        ? ['; $query; ', '; $query ', '; to $query; ', '; to $query ']
+        : ['; $query', '; to $query', '; $query', '; to $query'];
+    return [...probes, query];
+  }
+
+  /// Ranks a gloss match by **how central the query is to the entry's
+  /// meaning**.
+  ///
+  /// The ordering this replaced led with `is_common DESC, score DESC`, and
+  /// neither column discriminates: 22,551 rows share `score` 200 and 33,070
+  /// are common, so "happy" sorted ~226 effectively tied hits by nothing and
+  /// opened on 慶事 "happy event" while 楽しい and 嬉しい fell off the list
+  /// entirely. These keys break the tie with the match itself:
+  ///
+  /// 1. does the query *head* a definition, or is it buried inside one
+  /// 2. is the word common
+  /// 3. is the match in the entry's **first** sense — so 大石, whose second
+  ///    sense is exactly "dragon", stays below 竜
+  /// 4. is it near the front of that sense — one coarse bucket, not the exact
+  ///    offset, because "happy" being 楽しい's fourth gloss should not
+  ///    outweigh 楽しい being the commoner word
+  /// 5. corpus frequency rank (`freq`), unranked words last
+  /// 6. JLPT level, easiest first
+  ///
+  /// **Key 5 is what actually decides most searches**, because keys 1–4 tie
+  /// constantly: "happy" arrives with ~226 hits that are all common, all
+  /// score 200, and mostly all first-sense. `freq` is written by
+  /// scripts/build_freq_db.py from wordfreq's Japanese corpus blend and is
+  /// what orders 楽しい → 嬉しい → ハッピー → めでたい → 慶事 rather than
+  /// leaving them in table order.
+  ///
+  /// `freq IS NULL` **must** lead it. NULL sorts smallest in SQLite, so
+  /// `ORDER BY freq` alone would promote every word the corpus has never seen
+  /// to the top of the list — the same trap the kanji decks document.
+  ///
+  /// Key 6 still earns its place: `freq` covers 88% of common words, and JLPT
+  /// level orders the rest sensibly instead of dropping them on `score`.
+  static const _glossRankOrderBy = '''
+      ORDER BY
+        (CASE WHEN head_pos < $_noHead THEN 0 ELSE 1 END),
+        is_common DESC,
+        (CASE WHEN min(head_pos, any_pos) < sense1_end THEN 0 ELSE 1 END),
+        (CASE WHEN min(head_pos, any_pos) <= 40 THEN 0 ELSE 1 END),
+        freq IS NULL, freq ASC,
+        (CASE jlpt
+          WHEN 'N5' THEN 0 WHEN 'N4' THEN 1 WHEN 'N3' THEN 2
+          WHEN 'N2' THEN 3 WHEN 'N1' THEN 4 ELSE 5 END),
+        min(head_pos, any_pos), score DESC, length(term) ASC, id ASC''';
+
+  /// The whole gloss query: FTS match, cheap cut to [_rankCandidates], rank,
+  /// cut to the caller's limit.
+  ///
+  /// Three nested levels because each needs the one below it: `g` has to
+  /// exist before the probes can read it, and the probes have to exist before
+  /// the ORDER BY can. The outer level re-selects only the entry columns, so
+  /// the normalised gloss string never crosses the platform channel — an
+  /// ORDER BY may still reference the subquery columns it drops.
+  ///
+  /// **Bind order is [_rankArgs], then the FTS query, then the row limit** —
+  /// not the reading order of the tiers. SQLite numbers anonymous parameters
+  /// by where they appear in the SQL *text*, and the probe columns are
+  /// written above the `MATCH` they depend on.
+  static final _glossRankQuery = '''
+    SELECT ${_columns.join(', ')} FROM (
+      SELECT c.*,
+$_rankColumns
+      FROM (
+        SELECT $_ftsSelect, $_glossProbe AS g
+        FROM dictionary_fts fts
+        JOIN dictionary d ON d.id = fts.docid
+        WHERE dictionary_fts MATCH ?
+        ORDER BY d.is_common DESC, d.score DESC, d.id
+        LIMIT $_rankCandidates
+      ) c
+    )
+$_glossRankOrderBy
+    LIMIT ?''';
+
   Future<List<DictionaryEntry>> searchEntries(String query, {int limit = 50}) async {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return [];
 
     final db = await database;
     final seenIds = <int>{};
+    final seenSequences = <int>{};
     final results = <DictionaryEntry>[];
 
+    /// Collapses each JMdict `sequence` to a single card.
+    ///
+    /// A word's spellings are separate rows sharing one sequence, so "happy"
+    /// used to spend four of its first eight slots on 目出度い, 愛でたい and
+    /// 芽出度い after めでたい — three ways of writing a word already on
+    /// screen, pushing the words the user actually wanted off the bottom.
+    /// The queries order the canonical spelling first (by score, then term
+    /// length), so keeping the first row per sequence keeps the right one.
+    ///
+    /// Deliberately shared across tiers: an entry matched on its reading in
+    /// tier 0 must not come back as a gloss match in tier 2.
     void addAll(List<Map<String, Object?>> rows) {
       for (final row in rows) {
-        if (seenIds.add(row['id'] as int)) {
-          results.add(DictionaryEntry.fromMap(row));
-        }
+        if (results.length >= limit) return;
+        final sequence = row['sequence'] as int?;
+        if (sequence != null && !seenSequences.add(sequence)) continue;
+        if (!seenIds.add(row['id'] as int)) continue;
+        results.add(DictionaryEntry.fromMap(row));
       }
     }
 
@@ -231,6 +393,11 @@ class DatabaseService {
     // Tiers 0 and 1 — exact term/reading match, then prefix match — in a
     // single query. Common words (Jisho's "common word" flag) float to the top
     // of every tier so the everyday word lands first.
+    //
+    // The two are **emitted at different points** in the merge, though: an
+    // exact match leads the list, but a *prefix* match ranks below the gloss
+    // tier. See `_addTermPrefix` below for why. They stay one query because
+    // splitting them is what the `tier` column already avoids.
     //
     // These used to be one query *per tier per target*, and romaji input has
     // two targets (the Latin text and its kana), so a keystroke cost four
@@ -257,54 +424,87 @@ class DatabaseService {
         rangeArgs.addAll(['$target%', '$target%']);
       }
     }
+    // For romaji input, the Latin text the user typed can *also* be the
+    // English word — someone typing "kanji" wants 漢字, whose gloss is
+    // literally "kanji; Chinese character", not 感じ "feeling", which the
+    // corpus says is the commoner reading of かんじ. So when a query converted
+    // to kana, entries whose definition contains the Latin form are preferred
+    // among rows that are otherwise equally good matches.
+    //
+    // Only for romaji: on kana or kanji input this would be a `LIKE` over
+    // glosses that essentially never hits, for nothing. The rows it runs
+    // against are only the ones the indexed range already selected.
+    final glossHit = kana != null ? '(CASE WHEN glosses LIKE ? THEN 0 ELSE 1 END),' : '';
+    final glossHitArgs = kana != null ? <Object?>['%$folded%'] : const <Object?>[];
+
     final exactPlaceholders = List.filled(targets.length, '?').join(',');
-    addAll(await db.rawQuery('''
+    final termRows = await db.rawQuery('''
       SELECT ${_columns.join(', ')},
         (CASE WHEN term IN ($exactPlaceholders)
                 OR reading IN ($exactPlaceholders) THEN 0 ELSE 1 END) AS tier
       FROM dictionary
       WHERE ${ranges.join(' OR ')}
-      ORDER BY tier, is_common DESC, score DESC, length(term) ASC, id ASC
+      ORDER BY tier, is_common DESC, $glossHit freq IS NULL, freq ASC,
+        score DESC, length(term) ASC, id ASC
       LIMIT ?
-    ''', [...targets, ...targets, ...rangeArgs, limit]));
+    ''', [
+      ...targets, ...targets,   // the SELECT's exact-match CASE
+      ...rangeArgs,             // the WHERE
+      ...glossHitArgs,          // the ORDER BY — parameters bind in the order
+      limit * _overfetch,       // they appear in the SQL text, not in tier order
+    ]);
+
+    // Split on the `tier` column the query just computed, and hold the prefix
+    // half back until after the gloss tier.
+    //
+    // **This is the fix for searching an English word that also reads as
+    // romaji.** "china" converts to ちな, which is a real entry, so the prefix
+    // range matched 因みに, 血なまぐさい, 因む … and eleven kana words claimed
+    // the screen while 中国 sat at position twelve. A prefix match on a
+    // *guessed* kana spelling is the weakest evidence in the whole search, and
+    // it was outranking an entry whose definition is literally the word typed.
+    //
+    // Exact matches stay on top, and that is deliberate rather than timid:
+    // ranking the gloss tier above them too would mean "kuruma" opening on
+    // 車海老 "kuruma prawn" instead of 車, "sushi" on ねた, and "sake" on 為
+    // (whose gloss contains "for the sake of"). An exact term or reading match
+    // is strong evidence in either language; a prefix is not.
+    final exactRows = termRows.where((r) => r['tier'] == 0);
+    final prefixRows = termRows.where((r) => r['tier'] != 0);
+    addAll(exactRows.toList());
 
     // Tier 2/3: full-text search over definitions. Whole-word matches (e.g.
-    // searching "car" hits the definition word "car") rank above mere
-    // prefix matches (e.g. "card", "careful") so real hits like 車 surface
-    // first instead of being buried among unrelated entries.
+    // searching "car" hits the definition word "car") rank above mere prefix
+    // matches (e.g. "card", "careful") so real hits like 車 surface first
+    // instead of being buried among unrelated entries.
     //
-    // Within whole-word matches, entries whose definition *starts* with the
-    // query (e.g. 竜 = "dragon (esp...)") rank above entries that merely
-    // mention it (e.g. 辰 = "the Dragon (fifth sign...)"), so the obvious word
-    // lands first — the way Shirabe Jisho orders results.
+    // Both tiers are ordered by [_glossRankOrderBy], which ranks by where in
+    // the definition the query landed rather than by `is_common`/`score` —
+    // see the comment there for why those two columns cannot do the job.
     final ftsQuery = trimmed.replaceAll('"', '');
+    final foldedFts = ftsQuery.toLowerCase();
     if (results.length < limit && ftsQuery.isNotEmpty) {
       try {
-        addAll(await db.rawQuery('''
-          SELECT $_ftsSelect
-          FROM dictionary_fts fts
-          JOIN dictionary d ON d.id = fts.docid
-          WHERE dictionary_fts MATCH ?
-          ORDER BY d.is_common DESC, d.score DESC,
-            (CASE WHEN d.glosses LIKE ? OR d.glosses LIKE ? THEN 0 ELSE 1 END),
-            length(d.term) ASC
-          LIMIT ?
-        ''', ['"$ftsQuery"', '$ftsQuery%', '% • $ftsQuery%', limit - results.length]));
+        addAll(await db.rawQuery(_glossRankQuery, [
+          ..._rankArgs(foldedFts, whole: true),
+          '"$ftsQuery"',
+          (limit - results.length) * _overfetch,
+        ]));
       } catch (e) {
         debugPrint('FTS exact-word search failed: $e');
       }
     }
 
+    // Only now the term/reading *prefix* matches, held back above.
+    addAll(prefixRows.toList());
+
     if (results.length < limit && ftsQuery.isNotEmpty) {
       try {
-        addAll(await db.rawQuery('''
-          SELECT $_ftsSelect
-          FROM dictionary_fts fts
-          JOIN dictionary d ON d.id = fts.docid
-          WHERE dictionary_fts MATCH ?
-          ORDER BY d.is_common DESC, d.score DESC, length(d.term) ASC
-          LIMIT ?
-        ''', ['$ftsQuery*', limit - results.length]));
+        addAll(await db.rawQuery(_glossRankQuery, [
+          ..._rankArgs(foldedFts, whole: false),
+          '$ftsQuery*',
+          (limit - results.length) * _overfetch,
+        ]));
       } catch (e) {
         debugPrint('FTS prefix search failed: $e');
       }
