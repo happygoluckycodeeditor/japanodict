@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon (Android 8+). The launcher applies its own mask — circle,
+     squircle, teardrop, whatever the OEM ships — so the artwork is split into
+     a flat background and an inset foreground rather than being one bitmap.
+     Both layers come from scripts/build_app_icons.py; regenerate there. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <!-- Android 13+ themed icons: an alpha mask the system tints to the user's
+         wallpaper colours, so this layer is the disc silhouette with {jd}
+         knocked out of it rather than a colour version of the logo. -->
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>

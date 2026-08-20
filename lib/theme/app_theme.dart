@@ -117,19 +117,30 @@ class AppTheme {
 
   static ThemeData get dark => _build(_darkScheme);
 
+  /// The app's Latin face. Bundled rather than left to the platform default so
+  /// the app looks the same on every device instead of inheriting whatever
+  /// each OEM has substituted for Roboto.
+  ///
+  /// Safe to set as the app-wide `fontFamily` precisely because Inter carries
+  /// no Japanese at all — not the kana and kanji, and not 、。「」ー either —
+  /// so every Japanese character still resolves through [_jpFallback] below.
+  /// Inter only ever renders the Latin UI text and the English glosses.
+  static const String _latinFamily = 'Inter';
+
   /// Bundled Japanese face, applied as a *fallback* rather than as the app
   /// font — see the `fonts:` block in pubspec.yaml for why it is bundled.
   ///
-  /// Left as a fallback so Latin text keeps the platform default (Roboto), and
-  /// only characters Roboto has no glyph for — i.e. all kana and kanji — drop
-  /// through to Noto Sans JP. Setting it as `fontFamily` instead would restyle
-  /// every English label in the app as a side effect of fixing the kanji.
+  /// It has to stay the fallback and not the family: Noto Sans JP does cover
+  /// Latin, so promoting it would quietly hand it every English label in the
+  /// app, and its Latin is proportioned to sit beside CJK rather than to set
+  /// running text.
   static const List<String> _jpFallback = ['NotoSansJP'];
 
   static ThemeData _build(ColorScheme scheme) {
     return ThemeData(
       colorScheme: scheme,
       useMaterial3: true,
+      fontFamily: _latinFamily,
       fontFamilyFallback: _jpFallback,
       appBarTheme: AppBarTheme(
         centerTitle: true,

@@ -97,6 +97,11 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/databases/jitendex.db
+    # The app logo, for the places inside the app that show it (drawer header,
+    # first-run screen). The launcher icon and the Android launch window do NOT
+    # read this — they need real Android resources, which
+    # scripts/build_app_icons.py writes into android/app/src/main/res.
+    - assets/images/japanodict_logo.png
 
   # Noto Sans JP is bundled rather than left to the system font, because the
   # system gets it *wrong*. Flutter asks Android for a Han glyph with no
@@ -113,13 +118,46 @@ flutter:
   # (`fonttools varLib.instancer wght=400 / wght=700`) — Flutter does not map
   # `fontWeight` onto a variable font's `wght` axis, so shipping the variable
   # file directly would render bold headwords as synthetic smeared bold.
-  # Licence: SIL OFL 1.1, see assets/fonts/OFL.txt (credited in credits_screen).
+  # Licence: SIL OFL 1.1, see assets/fonts/OFL-NotoSansJP.txt (credited in
+  # credits_screen).
+  #
+  # Inter is the opposite case — it is the app font for Latin text, set as
+  # `fontFamily` in app_theme.dart with NotoSansJP behind it as the fallback.
+  # It has no kana or kanji at all, and no Japanese punctuation either (、。
+  # 「」ー are all absent), so every Japanese character in the app falls
+  # through to Noto exactly as before; Inter only ever gets asked for the Latin
+  # UI text and the English glosses.
+  #
+  # Five weights because that is what the app actually asks for: 400 and 500
+  # come from Material's own text theme, w600 and bold from the widgets, and
+  # italic from the parts-of-speech captions. Every one is a real cut — leaving
+  # a weight out means Flutter smears a synthetic one in its place.
+  #
+  # NOT subsetted, though ~2MB of Latin font looks like an obvious place to
+  # save: JMdict glosses are full of Greek (α-helix), Cyrillic, IPA and
+  # accented borrowings, and a subset that dropped them would silently swap
+  # those characters onto the system font mid-word.
+  # Licence: SIL OFL 1.1, see assets/fonts/OFL-Inter.txt (credited in
+  # credits_screen).
   fonts:
     - family: NotoSansJP
       fonts:
         - asset: assets/fonts/NotoSansJP-Regular.ttf
           weight: 400
         - asset: assets/fonts/NotoSansJP-Bold.ttf
+          weight: 700
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Italic.ttf
+          weight: 400
+          style: italic
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
           weight: 700
 
   # An image asset can refer to one or more resolution-specific "variants", see

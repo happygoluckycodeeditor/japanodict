@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The background layer of the adaptive launcher icon. This is the exact
+         yellow of the tile in applogo/japanodict_logo.png, not the brand's
+         #FDE265 — ic_launcher_foreground is the whole tile inset inside this
+         layer, so any difference between the two would draw a visible square
+         seam where the inset stops. -->
+    <color name="ic_launcher_background">#FEE266</color>
+</resources>

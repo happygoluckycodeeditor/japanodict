@@ -11,6 +11,7 @@ import 'credits_screen.dart';
 import 'anki_decks_screen.dart';
 import 'flashcards_screen.dart';
 import 'ocr_screen.dart';
+import '../widgets/app_logo.dart';
 import '../widgets/entry_badges.dart';
 import '../widgets/entry_detail_sheet.dart';
 import '../widgets/kanji_draw_pad.dart';
@@ -625,11 +626,19 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Welcome to JapanoDict! 🇯🇵',
-                style: Theme.of(context).textTheme.headlineSmall,
+              Row(
+                children: [
+                  const AppLogo(size: 44),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Welcome to JapanoDict!',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Text(
                 'Start typing above to search — results update as you type. '
                 'Your recent searches will show up here.',
@@ -662,11 +671,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.auto_stories_outlined,
-            size: 56,
-            color: theme.colorScheme.primary,
-          ),
+          const AppLogo(size: 72),
           const SizedBox(height: 20),
           Text('Setting up the dictionary', style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
@@ -964,22 +969,35 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: BoxDecoration(
               color: theme.colorScheme.primaryContainer,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.end,
+            // Mark beside the wordmark rather than stacked above it: a
+            // DrawerHeader is a fixed 160dp, and a stacked logo pushes the two
+            // lines of text off the bottom as soon as the system text scale is
+            // turned up.
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(
-                  'JapanoDict',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    color: theme.colorScheme.onPrimaryContainer,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Japanese dictionary',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onPrimaryContainer,
+                const AppLogo(size: 56),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        'JapanoDict',
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          color: theme.colorScheme.onPrimaryContainer,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Japanese dictionary',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

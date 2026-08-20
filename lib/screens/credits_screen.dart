@@ -53,6 +53,17 @@ class CreditsScreen extends StatelessWidget {
       url: 'https://github.com/notofonts/noto-cjk',
     ),
     _DataSource(
+      name: 'Inter',
+      description:
+          'The bundled Latin typeface, used for the interface and for the '
+          'English definitions. Shipped with the app so text is set the same '
+          'way on every device rather than in whatever each manufacturer '
+          'substitutes for the system font.',
+      copyright: '© The Inter Project Authors',
+      licence: 'SIL Open Font License 1.1',
+      url: 'https://github.com/rsms/inter',
+    ),
+    _DataSource(
       name: 'JLPT vocabulary lists',
       description:
           'Unofficial community JLPT level tags — the JLPT organisation '
