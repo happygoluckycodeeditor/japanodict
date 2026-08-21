@@ -82,7 +82,7 @@ class DatabaseService {
   // v6 added the KANJIDIC2 `kanji` table (scripts/build_kanji_db.py).
   // v7 added the KanjiVG `kanji_strokes` table (scripts/build_strokes_db.py).
   // v8 added the `dictionary.freq` corpus rank (scripts/build_freq_db.py).
-  static const int _dbVersion = 8;
+  static const int _dbVersion = 9;
   static const String _dbAsset = 'assets/databases/jitendex.db';
   static const String _dbFile = 'jitendex.db';
 
@@ -569,6 +569,142 @@ $_glossRankOrderBy
         orderBy: 'is_common DESC, score DESC, length(term) ASC',
         limit: limit,
       ));
+    }
+
+    return results;
+  }
+
+  // -------------------------------------------------------------------
+  // Proper names (JMnedict)
+  // -------------------------------------------------------------------
+
+  static const _nameColumns =
+      ['id', 'sequence', 'term', 'reading', 'name_type', 'priority', 'glosses'];
+
+  /// Proper-name matches for [query] — companies, products, works, characters,
+  /// organizations and railway stations from JMnedict.
+  ///
+  /// **Deliberately not part of [searchEntries], and not a sixth tier of it.**
+  /// JMdict holds no proper names at all, so 任天堂 and ゴジラ used to return a
+  /// blank screen; the fix is a separate table and a separate query, because
+  /// merging them would undo work the ranking depends on:
+  ///
+  ///   * names carry no `freq`, no `is_common` and no JLPT level, so they
+  ///     cannot be ordered against words by any of the keys [_glossRankOrderBy]
+  ///     uses — they would land wherever table order put them, in the middle of
+  ///     a carefully ranked list;
+  ///   * a name is a *different kind of answer*, not a worse one. The caller
+  ///     renders these under their own heading, the way partial matches are
+  ///     kept out of the main list.
+  ///
+  /// Ranking is [NameEntry.priority] (JMnedict's only signal — there is no
+  /// frequency data for names), then the shortest term, then `id` to keep the
+  /// tail of the list stable between builds the way the term tiers do.
+  ///
+  /// Returns an empty list rather than throwing when the `names` table is
+  /// absent, so a database predating this import degrades to the old behaviour
+  /// instead of taking search down with it.
+  Future<List<NameEntry>> searchNames(String query, {int limit = 10}) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return [];
+
+    final db = await database;
+    final seenSequences = <int>{};
+    final results = <NameEntry>[];
+
+    void addAll(List<Map<String, Object?>> rows) {
+      for (final row in rows) {
+        if (results.length >= limit) return;
+        // Collapse spellings to one card, exactly as `searchEntries` does.
+        if (!seenSequences.add(row['sequence'] as int)) continue;
+        results.add(NameEntry.fromMap(row));
+      }
+    }
+
+    // Same two targets as the main search: the text as typed, and — for romaji
+    // — its kana. The kana target earns its place on kanji names reached
+    // through their reading ("nintendou" -> にんてんどう -> 任天堂). Katakana
+    // names like ゴジラ are found by the English gloss tier below instead,
+    // since [Romaji.toHiragana] produces hiragana.
+    final folded = trimmed.toLowerCase();
+    final kana = Romaji.looksLikeRomaji(folded) ? Romaji.toHiragana(folded) : null;
+    final targets = <String>{folded, if (kana != null && kana != folded) kana};
+
+    // Tier 0/1 — exact then prefix, in one query, split by a computed `tier`
+    // column. Same shape and the same reason as the term tiers above: a range
+    // comparison rather than `LIKE`, so this plans as an index search instead
+    // of scanning all 17,854 rows on every keystroke.
+    final ranges = <String>[];
+    final exacts = <String>[];
+    final exactArgs = <Object?>[];
+    final rangeArgs = <Object?>[];
+    for (final target in targets) {
+      exacts.add('term = ? OR reading = ?');
+      exactArgs.addAll([target, target]);
+      final upper = _prefixUpperBound(target);
+      if (upper != null) {
+        ranges.add('(term >= ? AND term < ?) OR (reading >= ? AND reading < ?)');
+        rangeArgs.addAll([target, upper, target, upper]);
+      } else {
+        // Unrepresentable bound: fall back rather than scan a wrong range.
+        ranges.add('term LIKE ? OR reading LIKE ?');
+        rangeArgs.addAll(['$target%', '$target%']);
+      }
+    }
+
+    final termQuery = 'SELECT ${_nameColumns.join(', ')}, '
+        'CASE WHEN ${exacts.map((e) => '($e)').join(' OR ')} THEN 0 ELSE 1 END AS tier '
+        'FROM names '
+        'WHERE ${ranges.map((r) => '($r)').join(' OR ')} '
+        'ORDER BY tier ASC, priority DESC, length(term) ASC, id ASC '
+        'LIMIT ?';
+
+    try {
+      addAll(await db.rawQuery(
+        termQuery,
+        [...exactArgs, ...rangeArgs, limit * _overfetch],
+      ));
+    } catch (e) {
+      // No `names` table — a database copied before this import ran.
+      debugPrint('Name search failed: $e');
+      return const [];
+    }
+
+    // Tier 2 — the English translation. This is the tier that actually answers
+    // "godzilla" and "nintendo", which is how these will nearly always arrive.
+    // Quoted as a phrase, and `"` stripped first, for the same reason
+    // [searchEntries] does it: the bare token would let a stray FTS operator
+    // become a syntax error the user cannot see the cause of.
+    final ftsQuery = trimmed.replaceAll('"', '');
+    if (results.length < limit && ftsQuery.isNotEmpty) {
+      // Rank on *where in the translation the query landed*, the same idea as
+      // [_glossRankOrderBy] and for the same reason: JMnedict gives names no
+      // frequency or commonness data at all, so without this key the tier
+      // falls back to term length and "nintendo" opens on ６４ "Nintendo 64"
+      // and Ｗｉｉ, with 任天堂 itself third. Whole-gloss matches first, then
+      // names the query *heads*, then the ones merely mentioning it
+      // ("Wario (Nintendo character)").
+      final glossQuery = 'SELECT ${_nameColumns.map((c) => 'n.$c').join(', ')} '
+          'FROM names_fts f JOIN names n ON n.id = f.docid '
+          'WHERE names_fts MATCH ? '
+          'ORDER BY CASE WHEN lower(n.glosses) = ? THEN 0 '
+          '              WHEN lower(n.glosses) LIKE ? THEN 1 '
+          '              ELSE 2 END, '
+          'n.priority DESC, length(n.term) ASC, n.id ASC '
+          'LIMIT ?';
+      try {
+        addAll(await db.rawQuery(
+          glossQuery,
+          [
+            '"$ftsQuery"',
+            folded,
+            '$folded%',
+            (limit - results.length) * _overfetch,
+          ],
+        ));
+      } catch (e) {
+        debugPrint('Name gloss search failed: $e');
+      }
     }
 
     return results;

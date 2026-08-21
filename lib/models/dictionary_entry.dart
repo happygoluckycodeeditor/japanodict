@@ -185,3 +185,102 @@ class KanjiStrokes {
     );
   }
 }
+
+/// One proper name from JMnedict — a company, product, work of fiction,
+/// character, organization or railway station.
+///
+/// A **fifth data source**, and the reason it exists is that JMdict (and so
+/// Jitendex, which is a JMdict rebuild) holds no proper names at all: 任天堂
+/// and ゴジラ are simply not in it, which is why searching for them returned
+/// an empty screen while Shirabe Jisho and Takoboto found them. See
+/// `scripts/build_names_db.py`.
+///
+/// Kept deliberately separate from [DictionaryEntry] rather than folded into
+/// the `dictionary` table, because names must not reach the five search tiers
+/// or the gloss ranking — see `DatabaseService.searchNames`.
+class NameEntry {
+  final int id;
+  final String term;
+  final String? reading;
+  final String glosses;
+
+  /// Comma-joined JMnedict type tags (`company`, `work`, `station`, …). An
+  /// entry can carry more than one — ゴジラ is a `char` and its films are a
+  /// `work`.
+  final String? nameType;
+
+  /// JMnedict's priority marker (`spec1` and friends), 1 or 0. It is the only
+  /// ranking signal the file carries — there is no frequency data for names —
+  /// so it is what lifts 任天堂 above a same-named obscurity.
+  final int priority;
+
+  /// JMnedict entry sequence. Stable across rebuilds, unlike [id], and shared
+  /// by an entry's several spellings — so results collapse by it exactly as
+  /// [DictionaryEntry.sequence] does.
+  final int sequence;
+
+  NameEntry({
+    required this.id,
+    required this.term,
+    this.reading,
+    required this.glosses,
+    this.nameType,
+    this.priority = 0,
+    required this.sequence,
+  });
+
+  factory NameEntry.fromMap(Map<String, dynamic> map) {
+    return NameEntry(
+      id: map['id'] as int,
+      term: map['term'] as String,
+      reading: map['reading'] as String?,
+      glosses: map['glosses'] as String,
+      nameType: map['name_type'] as String?,
+      priority: map['priority'] as int? ?? 0,
+      sequence: map['sequence'] as int,
+    );
+  }
+
+  /// The reading, but only when it says something the term doesn't. A kana-only
+  /// name is stored as its own reading so the reading index and the FTS both
+  /// match it, which would otherwise render as ゴジラ【ゴジラ】.
+  String? get displayReading =>
+      (reading == null || reading!.isEmpty || reading == term) ? null : reading;
+
+  late final List<String> glossList = DictionaryEntry._split(glosses, '•');
+
+  /// The first type tag, spelled out for a badge. Only the first: an entry
+  /// with three tags would otherwise push the name itself off the row.
+  String? get typeLabel {
+    final tags = DictionaryEntry._split(nameType, ',');
+    if (tags.isEmpty) return null;
+    return _typeLabels[tags.first] ?? tags.first;
+  }
+
+  static const Map<String, String> _typeLabels = {
+    'company': 'Company',
+    'product': 'Product',
+    'work': 'Work',
+    'organization': 'Organization',
+    'char': 'Character',
+    'fict': 'Fiction',
+    'ev': 'Event',
+    'serv': 'Service',
+    'station': 'Station',
+    'group': 'Group',
+    'dei': 'Deity',
+    'obj': 'Object',
+    'myth': 'Mythology',
+    'creat': 'Creature',
+    'doc': 'Document',
+    'ship': 'Ship',
+    'leg': 'Legend',
+    'place': 'Place',
+    'surname': 'Surname',
+    'person': 'Person',
+    'given': 'Given name',
+    'fem': 'Given name',
+    'masc': 'Given name',
+    'unclass': 'Name',
+  };
+}

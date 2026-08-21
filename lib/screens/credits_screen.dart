@@ -20,6 +20,15 @@ class CreditsScreen extends StatelessWidget {
       url: 'https://jitendex.org',
     ),
     _DataSource(
+      name: 'JMnedict',
+      description:
+          'Japanese proper names: companies, products, works of fiction, '
+          'characters, organizations and railway stations.',
+      copyright: '© The Electronic Dictionary Research and Development Group',
+      licence: 'CC BY-SA 4.0',
+      url: 'https://www.edrdg.org/enamdict/enamdict_doc.html',
+    ),
+    _DataSource(
       name: 'KANJIDIC2',
       description:
           'Per-character kanji data: meanings, on/kun readings, stroke '

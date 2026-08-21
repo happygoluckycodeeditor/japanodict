@@ -39,6 +39,14 @@ class _HomeScreenState extends State<HomeScreen> {
   /// and under their own heading, never mixed in: a partial match is not an
   /// answer to what was typed, it is the closest the dictionary can get.
   List<TokenMatch> _partials = const [];
+
+  /// Proper names (JMnedict) matching the query — 任天堂, ゴジラ, 東京駅.
+  ///
+  /// Rendered under their own heading between [_results] and [_partials], and
+  /// never merged into the results list: a name carries no frequency, JLPT or
+  /// common-word data, so it cannot be ranked against a word by any of the
+  /// keys the search's ordering uses. See `DatabaseService.searchNames`.
+  List<NameEntry> _names = const [];
   bool _isLoading = false;
   String _query = '';
   bool _showDrawPad = false;
@@ -129,6 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _query = '';
         _results = [];
+        _names = const [];
         _partials = const [];
         _isLoading = false;
       });
@@ -152,7 +161,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _runSearch(String text) async {
     final query = text.trim();
-    final results = await _dbService.searchEntries(query);
+    // Names are a second table and a second query, issued *alongside* the
+    // search rather than after it. It is a few indexed lookups against 17,854
+    // rows, but awaiting it in sequence would add that to every keystroke of a
+    // live search for something the common case doesn't need.
+    final (results, names) = await (
+      _dbService.searchEntries(query),
+      _dbService.searchNames(query),
+    ).wait;
     if (!mounted || _searchController.text != text) return;
 
     // A Japanese query that matched nothing gets the second pass below, so the
@@ -162,6 +178,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final decomposing = results.isEmpty && _decomposable(query, results) != null;
     setState(() {
       _results = results;
+      _names = names;
       _partials = const [];
       _isLoading = decomposing;
     });
@@ -170,7 +187,9 @@ class _HomeScreenState extends State<HomeScreen> {
     // no-result prefixes on the way to a real word isn't a search the user
     // would ever want to replay.
     _historyIdle?.cancel();
-    if (results.isNotEmpty) _rememberQueryWhenSettled(text);
+    // A name is an answer to what was typed, so a query that only found one is
+    // just as worth replaying as one that found a word.
+    if (results.isNotEmpty || names.isNotEmpty) _rememberQueryWhenSettled(text);
 
     unawaited(_findPartials(text, results));
   }
@@ -711,11 +730,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildResults(BuildContext context) {
-    if (_isLoading && _results.isEmpty) {
+    if (_isLoading && _results.isEmpty && _names.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_results.isEmpty && _partials.isEmpty) {
+    if (_results.isEmpty && _names.isEmpty && _partials.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -742,24 +761,135 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // Results, then the partial-match section as a heading plus its own cards
-    // in the same scroll view. One list rather than two stacked ones: the
-    // partials are the *tail* of the answer, and a separate pane for them
-    // would either take space away from real results or need its own scrollbar
-    // for what is usually two cards.
-    final partialsStart = _results.length + 1;
+    // Three sections in one scroll view: the results, then any proper names,
+    // then the partial-match breakdown. One list rather than stacked panes —
+    // both tails are *tails of the answer*, and a separate pane for each would
+    // either take space from real results or need its own scrollbar for what
+    // is usually two cards.
+    //
+    // Names sit above partials because they are a stronger answer: a name is
+    // an entry for exactly what was typed, while a partial match is only the
+    // pieces the query is made of.
+    final namesBlock = _names.isEmpty ? 0 : 1 + _names.length;
+    final partialsBlock = _partials.isEmpty ? 0 : 1 + _partials.length;
+    final namesStart = _results.length + 1;
+    final partialsStart = _results.length + namesBlock + 1;
     return ListView.builder(
-      itemCount: _results.length + (_partials.isEmpty ? 0 : 1 + _partials.length),
+      itemCount: _results.length + namesBlock + partialsBlock,
       // Result cards are stateless — nothing in one is worth preserving when it
       // scrolls out of view — so the default keep-alive machinery is pure
       // overhead on a list that can be 50 cards long.
       addAutomaticKeepAlives: false,
       itemBuilder: (context, index) {
         if (index < _results.length) return _buildResultCard(_results[index]);
+        if (namesBlock > 0 && index < _results.length + namesBlock) {
+          if (index < namesStart) return _buildNamesHeader(context);
+          return _buildNameCard(_names[index - namesStart]);
+        }
         if (index < partialsStart) return _buildPartialHeader(context);
         final match = _partials[index - partialsStart];
         return _buildResultCard(match.best, from: match);
       },
+    );
+  }
+
+  /// Heading over the proper-name section, so a name can never be mistaken for
+  /// a dictionary word — they come from different sources with different
+  /// licences and very different reliability.
+  Widget _buildNamesHeader(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(top: _results.isEmpty ? 4 : 16, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.badge_outlined, size: 18, color: theme.colorScheme.primary),
+              const SizedBox(width: 8),
+              Text(
+                'Names',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              'Companies, products, works and places',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A proper-name result.
+  ///
+  /// Deliberately **not** [_buildResultCard] with a different model: a name has
+  /// no parts of speech, no JLPT level, no common-word flag and no senses to
+  /// clamp, so every affordance that card carries would be dead weight. It is
+  /// also not tappable — the entry detail sheet is built around examples,
+  /// kanji breakdowns and favourites, none of which a JMnedict row has. The
+  /// characters are still reachable: tapping one opens the kanji screen.
+  Widget _buildNameCard(NameEntry name) {
+    final theme = Theme.of(context);
+    final reading = name.displayReading;
+    final label = name.typeLabel;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Flexible(
+                child: Text(
+                  name.term,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              if (reading != null) ...[
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    reading,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+              if (label != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            name.glossList.join(' • '),
+            style: theme.textTheme.bodyMedium,
+          ),
+        ],
+      ),
     );
   }
 
