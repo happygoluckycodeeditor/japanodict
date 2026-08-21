@@ -257,6 +257,17 @@ class NameEntry {
     return _typeLabels[tags.first] ?? tags.first;
   }
 
+  /// Every type tag spelled out, de-duplicated — `fem`, `masc` and `given` all
+  /// render as "Given name", and an entry carrying two of them should not say
+  /// so twice. For the detail sheet, which has room for all of them.
+  List<String> get typeLabels {
+    final labels = <String>{};
+    for (final tag in DictionaryEntry._split(nameType, ',')) {
+      labels.add(_typeLabels[tag] ?? tag);
+    }
+    return labels.toList();
+  }
+
   static const Map<String, String> _typeLabels = {
     'company': 'Company',
     'product': 'Product',

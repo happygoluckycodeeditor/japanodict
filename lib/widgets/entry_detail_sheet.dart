@@ -4,6 +4,7 @@ import '../models/dictionary_entry.dart';
 import '../screens/kanji_detail_screen.dart';
 import '../services/database_service.dart';
 import 'entry_badges.dart';
+import 'favourite_button.dart';
 import 'kanji_summary_card.dart';
 
 /// Opens the entry detail sheet for [entry].
@@ -64,22 +65,40 @@ class _EntryDetailSheetState extends State<EntryDetailSheet> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Flexible(
-                      child: Text(
-                        entry.term,
-                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
+                    // The term and its badges are grouped inside one `Expanded`
+                    // rather than sitting flat beside a `Spacer`. A `Spacer` is
+                    // a flex child too, so it would split the free space with
+                    // the term and clip long headwords at half the width they
+                    // have available.
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              entry.term,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
                             ),
+                          ),
+                          if (entry.isCommon) ...[
+                            const SizedBox(width: 10),
+                            const CommonBadge(),
+                          ],
+                          if (entry.jlpt != null) ...[
+                            const SizedBox(width: 6),
+                            JlptBadge(level: entry.jlpt!),
+                          ],
+                        ],
                       ),
                     ),
-                    if (entry.isCommon) ...[
-                      const SizedBox(width: 10),
-                      const CommonBadge(),
-                    ],
-                    if (entry.jlpt != null) ...[
-                      const SizedBox(width: 6),
-                      JlptBadge(level: entry.jlpt!),
-                    ],
+                    // Only when there's a `sequence` to key on: a star has to
+                    // survive a dictionary rebuild, and `id` is an autoincrement
+                    // that doesn't. No stable key, no star.
+                    if (entry.sequence != null)
+                      FavouriteButton(favouriteKey: 'v:${entry.sequence}'),
                   ],
                 ),
                 if (entry.reading != null && entry.reading!.isNotEmpty)

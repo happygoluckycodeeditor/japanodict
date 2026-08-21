@@ -98,6 +98,15 @@ class FavouritesService extends ChangeNotifier {
       } else {
         await db.delete('favourites', where: 'key = ?', whereArgs: [key]);
       }
+      // A *second* notify, once the row is actually committed.
+      //
+      // The one above is what makes the star fill on the tap's own frame, and
+      // it fires while the write is still in flight — fine for listeners that
+      // read [_keys], wrong for any that re-read the table. `FavouritesScreen`
+      // re-resolves its rows from `jitendex.db` via [vocabRefs]/[kanjiRefs],
+      // which query *this* database, so with only the optimistic notify it
+      // reliably re-read the row it had just deleted and redrew it.
+      notifyListeners();
     } catch (e) {
       debugPrint('FavouritesService: toggle failed for $key: $e');
       if (nowFavourite) {

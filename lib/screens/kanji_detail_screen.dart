@@ -4,6 +4,7 @@ import '../models/dictionary_entry.dart';
 import '../services/database_service.dart';
 import '../widgets/entry_badges.dart';
 import '../widgets/entry_detail_sheet.dart';
+import '../widgets/favourite_button.dart';
 import '../widgets/stroke_order_diagram.dart';
 
 /// Everything KANJIDIC2 knows about one character, plus the words written with
@@ -45,6 +46,9 @@ class _KanjiDetailScreenState extends State<KanjiDetailScreen> {
       appBar: AppBar(
         title: Text(kanji.literal),
         backgroundColor: theme.colorScheme.primaryContainer,
+        actions: [
+          FavouriteButton(favouriteKey: 'k:${kanji.literal}'),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),

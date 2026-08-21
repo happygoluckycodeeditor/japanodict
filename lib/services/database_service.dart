@@ -710,6 +710,34 @@ $_glossRankOrderBy
     return results;
   }
 
+  /// Every spelling of one JMnedict entry, for the name sheet's "Also written"
+  /// row.
+  ///
+  /// [searchNames] collapses a sequence to a single card, so without this the
+  /// app can find ニンテンドウ but can never show that it is the same entry as
+  /// ニンテンドー. Detail-view only, like [getExamples] — it is one indexed
+  /// lookup (`idx_names_sequence`) and never runs on the keystroke path.
+  ///
+  /// Returns an empty list if the `names` table is absent, exactly as
+  /// [searchNames] does, so a database copied before that import degrades
+  /// instead of throwing.
+  Future<List<NameEntry>> getNamesBySequence(int sequence) async {
+    final db = await database;
+    try {
+      final rows = await db.query(
+        'names',
+        columns: _nameColumns,
+        where: 'sequence = ?',
+        whereArgs: [sequence],
+        orderBy: 'priority DESC, id ASC',
+      );
+      return rows.map(NameEntry.fromMap).toList();
+    } catch (e) {
+      debugPrint('Name spelling lookup failed: $e');
+      return const [];
+    }
+  }
+
   Future<DictionaryEntry?> getEntryById(int id) async {
     final db = await database;
     final results = await db.query(

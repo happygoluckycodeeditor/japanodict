@@ -9,11 +9,13 @@ import '../utils/jp_text.dart';
 import '../utils/romaji.dart';
 import 'credits_screen.dart';
 import 'anki_decks_screen.dart';
+import 'favourites_screen.dart';
 import 'flashcards_screen.dart';
 import 'ocr_screen.dart';
 import '../widgets/app_logo.dart';
 import '../widgets/entry_badges.dart';
 import '../widgets/entry_detail_sheet.dart';
+import '../widgets/name_detail_sheet.dart';
 import '../widgets/kanji_draw_pad.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -316,6 +318,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openFavourites() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const FavouritesScreen()),
+    );
+  }
+
   void _openFlashcards() {
     Navigator.push(
       context,
@@ -334,7 +343,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('JapanoDict'),
+        title: Text(
+          "JapanoDict",
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),),
         backgroundColor: Theme.of(context).colorScheme.primaryContainer,
       ),
       drawer: _buildDrawer(context),
@@ -834,61 +847,89 @@ class _HomeScreenState extends State<HomeScreen> {
   ///
   /// Deliberately **not** [_buildResultCard] with a different model: a name has
   /// no parts of speech, no JLPT level, no common-word flag and no senses to
-  /// clamp, so every affordance that card carries would be dead weight. It is
-  /// also not tappable — the entry detail sheet is built around examples,
-  /// kanji breakdowns and favourites, none of which a JMnedict row has. The
-  /// characters are still reachable: tapping one opens the kanji screen.
+  /// clamp, so every affordance that card carries would be dead weight.
+  ///
+  /// It opens [showNameDetailSheet] rather than the entry sheet for the same
+  /// reason — no examples, no badges, nothing to favourite — but it *does*
+  /// open something: the per-character breakdown works on a name exactly as it
+  /// does on a word, because `kanji` is KANJIDIC2 keyed by character and knows
+  /// nothing about which dictionary the word came from. 任天堂 is the kind of
+  /// word a learner meets on a sign, so its characters are usually the point.
   Widget _buildNameCard(NameEntry name) {
     final theme = Theme.of(context);
     final reading = name.displayReading;
     final label = name.typeLabel;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Flexible(
-                child: Text(
-                  name.term,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+    return InkWell(
+      // Flat, not a [Card] like a word result — the two must stay
+      // distinguishable at a glance, which is the whole reason names have
+      // their own heading. The chevron is what says this one is tappable now
+      // that it looks the same as before.
+      onTap: () {
+        // Opening a name settles the query exactly as opening a word does.
+        _rememberQuery();
+        showNameDetailSheet(context, name);
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          name.term,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      if (reading != null) ...[
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            reading,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (label != null) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          label,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                ),
+                  const SizedBox(height: 2),
+                  Text(
+                    name.glossList.join(' • '),
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ],
               ),
-              if (reading != null) ...[
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    reading,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ],
-              if (label != null) ...[
-                const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            name.glossList.join(' • '),
-            style: theme.textTheme.bodyMedium,
-          ),
-        ],
+            ),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1143,6 +1184,15 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           const Divider(),
+          ListTile(
+            leading: const Icon(Icons.star_outline),
+            title: const Text('Favourites'),
+            subtitle: const Text('Words and kanji you starred'),
+            onTap: () {
+              Navigator.pop(context);
+              _openFavourites();
+            },
+          ),
           ListTile(
             leading: const Icon(Icons.style_outlined),
             title: const Text('Flashcards'),
